@@ -1,0 +1,24 @@
+# @mgpl-diagnostics/client
+
+> Headless, zero-dependency TypeScript SDK for browsers (or any fetch runtime) that talks to the MGPL Diagnostics backend (`createMgplApi` / `createReportApi`). It requests lab reports and invoices as PDF Blobs, HTML strings or JSON, and fetches the test catalog and price list. It has no UI and no CSS; apps build their own UI/UX. Optional unstyled React hooks live in "@mgpl-diagnostics/client/react".
+
+Key facts for agents:
+- `const mgpl = createMgplClient({ baseUrl: "/api/mgpl", headers?, credentials?, fetch? })`.
+- Reports: `mgpl.reports.templates()`, `.pdf(req)`, `.html(req)`, `.letterheadPdf()`, `.samples()`. Invoices: `mgpl.invoices.totals(invoice)`, `.pdf(req)`, `.html(req)`, `.priceList()`.
+- Build entry forms from `templates()`: each template lists `fields` (key, label, unit, range); send `{ patient, tests: [{ template, results: { [key]: value } }] }`.
+- Errors throw `MgplApiError` (status + server message). Helpers: downloadBlob, openBlob, printBlob.
+- React: useTemplates, useReportHtml, useInvoiceHtml, useInvoiceTotals, usePdfUrl, useAsync, and `<HtmlFrame html />` (bare sandboxed iframe with `.print()`).
+- Never import the backend kits here. The types in src/types.ts mirror them and are checked by report-studio's contract-check.ts.
+
+## Docs
+
+- [README](README.md): why, quick start, SDK table, React hooks, errors and auth
+- [API reference](docs/api.md): every method, option and type
+- [AGENTS.md](AGENTS.md): rules (no deps, no UI, mirrored contract)
+- [llms-full.txt](llms-full.txt): everything above plus the source
+
+## Source
+
+- [src/index.ts](src/index.ts): createMgplClient, helpers
+- [src/react.tsx](src/react.tsx): hooks and HtmlFrame
+- [src/types.ts](src/types.ts): contract types
