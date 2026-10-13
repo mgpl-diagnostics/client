@@ -35,7 +35,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "prepare": "tsup",
-    "llms": "node scripts/llms-full.mjs \"@mgpl-diagnostics/client\" README.md docs/api.md AGENTS.md src/types.ts src/index.ts src/react.tsx"
+    "llms": "node scripts/llms-full.mjs @mgpl-diagnostics/client README.md AGENTS.md llms.txt docs package.json src scripts"
   },
   "peerDependencies": {
     "react": ">=18"
