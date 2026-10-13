@@ -1,0 +1,58 @@
+{
+  "name": "@mgpl-diagnostics/client",
+  "version": "1.0.0",
+  "description": "Headless browser SDK for the MGPL Diagnostics backend (reports + invoices). Zero dependencies, no UI — build your own.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": "github:mgpl-diagnostics/client",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "AGENTS.md",
+    "llms.txt",
+    "LICENSE",
+    "llms-full.txt"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepare": "tsup",
+    "llms": "node scripts/llms-full.mjs \"@mgpl-diagnostics/client\" README.md docs/api.md AGENTS.md src/types.ts src/index.ts src/react.tsx"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "react": "^19.3.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
