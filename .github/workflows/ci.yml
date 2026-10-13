@@ -30,3 +30,5 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run typecheck
       - run: npm run build
+      - name: llms-full.txt is up to date (run `npm run llms` and commit if this fails)
+        run: npm run llms && git diff --exit-code -- llms-full.txt
