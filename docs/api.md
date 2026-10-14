@@ -1,5 +1,8 @@
 # API reference: @mgpl-diagnostics/client
 
+This page covers the HTTP client (`createMgplClient`) for report-kit / invoice-kit's API. The GraphQL
+client for mgpl-diagnostics/api is in [graphql.md](graphql.md).
+
 ## createMgplClient(options?)
 
 ```ts

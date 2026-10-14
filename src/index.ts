@@ -13,6 +13,21 @@ import type {
 
 export * from "./types";
 
+// The GraphQL SDK for mgpl-diagnostics/api (one endpoint for everything). Its types are under `Gql`
+// here, or flat in "@mgpl-diagnostics/client/graphql".
+export {
+  createMgplGraphQLClient,
+  documentBlob,
+  csvBlob,
+  createTransport,
+  MgplGraphQLError,
+  OPERATIONS,
+  FRAGMENTS,
+  withFragments,
+} from "./graphql/index";
+export type { MgplGraphQLClient, GraphQLClientOptions, GraphQLErrorItem, Operation, OperationName } from "./graphql/index";
+export type * as Gql from "./graphql/types";
+
 /** Default mount point of the backend */
 export const DEFAULT_BASE_URL = "/api/mgpl";
 

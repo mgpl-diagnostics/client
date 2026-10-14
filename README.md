@@ -14,7 +14,7 @@ Your UI, your design system, your UX. The backend renders the reports and invoic
 [![React](https://img.shields.io/badge/React%20hooks-optional-C2410C?logo=react&logoColor=white)](#react-optional)
 [![License](https://img.shields.io/badge/license-All%20rights%20reserved-E9A23B)](LICENSE)
 
-[Quick start](#quick-start) · [SDK](#the-sdk) · [React](#react-optional) · [Errors & auth](#errors-and-auth) · [Docs](docs/api.md)
+[Quick start](#quick-start) · [GraphQL](#graphql-the-whole-backend) · [SDK](#the-sdk) · [React](#react-optional) · [Errors & auth](#errors-and-auth) · [Docs](docs/api.md)
 
 </div>
 
@@ -59,7 +59,59 @@ const pdf = await mgpl.reports.pdf({
 downloadBlob(pdf, "MGPL1025.pdf");
 ```
 
-## The SDK
+## GraphQL: the whole backend
+
+[mgpl-diagnostics/api](https://github.com/mgpl-diagnostics/api) serves everything (sign-in, patients,
+bookings, samples, results, billing, books, GST, receivables, settlements, cash and bank, documents) at
+**one endpoint, `POST /graphql`**. `createMgplGraphQLClient` has a typed method for each of its 138
+operations, with no GraphQL library: the operations are plain strings, validated against the server's
+schema by the api's contract test.
+
+```mermaid
+flowchart LR
+  UI["Your UI"] --> G["createMgplGraphQLClient()"]
+  G -- "POST /graphql<br/>Authorization: Bearer token" --> API["mgpl-diagnostics/api"]
+  API --> K["auth · db · catalog · report · invoice · tally · finance kits"]
+```
+
+```ts
+import { createMgplGraphQLClient, documentBlob, openBlob, MgplGraphQLError } from "@mgpl-diagnostics/client";
+
+const mgpl = createMgplGraphQLClient({
+  url: "https://api.your-lab.in/graphql",
+  token: sessionStorage.getItem("mgpl-token"),                 // optional starting token
+  onToken: (t) => (t ? sessionStorage.setItem("mgpl-token", t) : sessionStorage.removeItem("mgpl-token")),
+});
+
+await mgpl.auth.login({ email: "desk@your-lab.in", password });  // keeps the token
+const [hit] = await mgpl.catalog.search("cbc");
+const patient = await mgpl.patients.register({ branchId, name: "Kavita Sharma", sex: "female", ageYears: 32 });
+const { booking } = await mgpl.bookings.create({ branchId, patientId: patient.id, tests: [{ testCode: hit!.test.code! }] });
+const invoice = await mgpl.invoices.issue({
+  branchId, patientId: patient.id, bookingId: booking.id,
+  items: [{ code: "CBC" }],                                     // name and MRP from the catalog
+  payments: [{ amountPaise: 30000, mode: "upi" }],
+});
+openBlob(documentBlob(await mgpl.documents.invoice(invoice.id)));  // the PDF arrives as base64
+
+try {
+  await mgpl.periods.setLockDate({ upTo: "2026-09-30" });
+} catch (e) {
+  if (e instanceof MgplGraphQLError && e.code === "FORBIDDEN") alert("Ask an accountant");
+}
+```
+
+Namespaces: `auth`, `users`, `organization`, `catalog`, `patients`, `doctors`, `bookings`, `samples`,
+`reports`, `invoices`, `books`, `gst`, `receivables`, `settlements`, `cash`, `bank`, `periods`, `exports`,
+`documents`, plus `request(query, variables)` for a custom selection. Money is integer paise; days are
+`"YYYY-MM-DD"`. Full list: [docs/graphql.md](docs/graphql.md). The types are flat in
+`@mgpl-diagnostics/client/graphql`, or under the `Gql` namespace in the main entry.
+
+## The SDK (report and invoice HTTP API)
+
+The REST client below talks to `createMgplApi()` (invoice-kit) or `createReportApi()` (report-kit) when an
+app mounts them directly, as report-studio does. New apps should use the GraphQL client above.
+
 
 | Call | Backend route | Returns |
 |---|---|---|
@@ -118,7 +170,7 @@ export function Preview({ request }) {
 `HtmlFrame` isolates the document (its CSS can't touch yours), disables scripts, sizes itself to the content and
 exposes `print()`.
 
-## Errors and auth
+## Errors and auth (HTTP API)
 
 ```ts
 import { createMgplClient, MgplApiError } from "@mgpl-diagnostics/client";
@@ -143,11 +195,12 @@ For a backend on another origin, enable CORS there: `createMgplApi({ cors: "http
 ```bash
 npm install
 npm run typecheck
-npm run build      # dist/index.js + dist/react.js (the React entry is marked "use client")
+npm run build      # dist/index.js, dist/graphql.js, dist/react.js (the React entry is marked "use client")
 ```
 
-End-to-end tests of the SDK against the real backend live in invoice-kit (`npm run test:api`).
-Docs: [docs/api.md](docs/api.md) · [AGENTS.md](AGENTS.md) · AI index [llms.txt](llms.txt) / [llms-full.txt](llms-full.txt).
+End-to-end tests of the HTTP SDK against the real backend live in invoice-kit (`npm run test:api`). The
+GraphQL operations are validated against the server's schema by mgpl-diagnostics/api (`npm test`).
+Docs: [docs/graphql.md](docs/graphql.md) · [docs/api.md](docs/api.md) · [AGENTS.md](AGENTS.md) · AI index [llms.txt](llms.txt) / [llms-full.txt](llms-full.txt).
 
 ## Part of MGPL Diagnostics
 
@@ -155,6 +208,7 @@ Docs: [docs/api.md](docs/api.md) · [AGENTS.md](AGENTS.md) · AI index [llms.txt
 |---|---|---|
 | [report-kit](https://github.com/mgpl-diagnostics/report-kit) | backend | reports, letterhead, templates |
 | [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | backend | patient invoices + combined API |
+| [api](https://github.com/mgpl-diagnostics/api) | backend | the GraphQL server: one endpoint for everything |
 | **client** | frontend | headless SDK, zero dependencies |
 | [report-studio](https://github.com/mgpl-diagnostics/report-studio) | app | Next.js reference app |
 
