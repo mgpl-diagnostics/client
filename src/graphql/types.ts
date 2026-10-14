@@ -37,8 +37,9 @@ export interface BranchRef { id: ID; code: string; name: string }
 export interface RoleAssignment { role: string; branchId: ID | null }
 export interface User { id: ID; name: string; email: string; phone: string | null; status: "active" | "disabled" | "invited"; roles: RoleAssignment[]; lastLoginAt: DateTime | null; createdAt: DateTime }
 export interface Role { id: ID; key: string; name: string; permissions: string[]; system: boolean }
-export interface Session { id: ID; current: boolean; createdAt: DateTime; lastSeenAt: DateTime; expiresAt: DateTime; ip: string | null; userAgent: string | null }
-export interface LoginResult { token: string; expiresAt: DateTime; user: User }
+export interface Session { id: ID; current: boolean; createdAt: DateTime; lastSeenAt: DateTime; expiresAt: DateTime; ip: string | null; userAgent: string | null; deviceId: string | null; deviceInfo: Record<string, string | number | boolean> | null }
+/** login and refreshSession. The access token goes in `Authorization: Bearer`; the refresh token buys the next pair. */
+export interface LoginResult { accessToken: string; accessExpiresAt: DateTime; refreshToken: string; refreshExpiresAt: DateTime; user: User }
 export interface Branch { id: ID; code: string; name: string; kind: BranchKind; phone: string | null; gstin: string | null; stateCode: string | null; address: Address | null; active: boolean }
 export interface Organization { id: ID; name: string; code: string; legalName: string | null; gstin: string | null; phone: string | null; email: string | null; address: Address | null; branches: Branch[] }
 export interface Viewer { user: User; organization: Organization; permissions: string[] }
@@ -178,6 +179,11 @@ export interface AgreementInput { partnerId: ID; kind: AgreementKind; shareBp?: 
 export interface CloseCashDayInput { branchId: ID; day: Day; countedPaise: number; denominations?: { valuePaise: number; count: number }[]; notes?: string }
 export interface BankImportInput { branchId: ID; ledgerId: ID; csv: string; fileName?: string }
 export interface LockDateInput { branchId?: ID; upTo: Day | null; reason?: string }
+export type JobState = "waiting" | "active" | "completed" | "failed" | "delayed";
+export type DocumentJobKind = "invoice" | "booking_reports";
+/** Background work (the API's worker). Poll with documents.job(id) or documents.waitForJob(id). */
+export interface Job { id: ID; kind: DocumentJobKind; state: JobState; attempts: number; error: string | null; createdAt: DateTime; finishedAt: DateTime | null; document: RenderedDocument | null }
+export interface DocumentJobInput { kind: DocumentJobKind; invoiceId?: ID; bookingId?: ID; reportIds?: ID[]; format?: DocumentFormat; variant?: ReportVariant; design?: ReportDesign }
 export interface RenderOptions { format?: DocumentFormat; variant?: ReportVariant; design?: ReportDesign; fileName?: string }
 
 // ------------------------------------------------------------------ mutation results
@@ -188,7 +194,9 @@ export interface BankImportResult { added: number; skipped: number; statement: B
 export interface ReconcileResult { matched: number; unmatched: number; settlements: number }
 export interface YearEndResult { netProfitPaise: number; vouchers: Voucher[] }
 export interface DocumentSample { id: string; label: string; group: string | null }
-export interface LoginInput { email: string; password: string; orgCode?: string }
+/** Security signals sent with login and refresh (see "./device"). All optional. */
+export interface DeviceInput { deviceId?: string; fingerprint?: string; clientSessionId?: string; info?: Record<string, string | number | boolean> }
+export interface LoginInput { email: string; password: string; orgCode?: string; device?: DeviceInput }
 export interface RoleInput { key: string; name: string; permissions: string[] }
 export type OrganizationInput = Partial<Pick<Organization, "name" | "legalName" | "gstin" | "phone" | "email">> & { address?: Address };
 export type BranchPatch = Partial<Omit<BranchInput, "code">>;

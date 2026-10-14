@@ -1,7 +1,7 @@
 // @mgpl-diagnostics/client/react — optional, UNSTYLED React hooks + a bare iframe.
 // No layout, no CSS: pass className/style and design the UI however you like.
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type IframeHTMLAttributes } from "react";
-import type { MgplClient } from "./index";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type CSSProperties, type IframeHTMLAttributes } from "react";
+import type { MgplClient, SessionManager, SessionSnapshot } from "./index";
 import type { InvoiceInput, InvoiceRequest, InvoiceTotals, ReportRequest, TemplateCatalog } from "./types";
 
 export interface AsyncState<T> {
@@ -31,6 +31,9 @@ export function useAsync<T>(load: () => Promise<T>, key: string): AsyncState<T> 
   }, [key, nonce]);
   return { data: state.data, loading: state.loading, error: state.error, reload: () => setNonce((n) => n + 1) };
 }
+
+/** The session (signed in or out, user, expiries), re-rendering on login, refresh, logout and other tabs. */
+export const useMgplSession = (session: SessionManager): SessionSnapshot => useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
 
 /** Test catalog for building result-entry forms. */
 export const useTemplates = (client: MgplClient): AsyncState<TemplateCatalog> => useAsync(() => client.reports.templates(), client.baseUrl);

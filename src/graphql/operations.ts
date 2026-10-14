@@ -8,7 +8,8 @@ export const FRAGMENTS: Record<string, string> = {
   BranchRef: `fragment BranchRef on Branch { id code name }`,
   UserFields: `fragment UserFields on User { id name email phone status roles { role branchId } lastLoginAt createdAt }`,
   RoleFields: `fragment RoleFields on Role { id key name permissions system }`,
-  SessionFields: `fragment SessionFields on Session { id current createdAt lastSeenAt expiresAt ip userAgent }`,
+  SessionFields: `fragment SessionFields on Session { id current createdAt lastSeenAt expiresAt ip userAgent deviceId deviceInfo }`,
+  LoginResultFields: `fragment LoginResultFields on LoginResult { accessToken accessExpiresAt refreshToken refreshExpiresAt user { ...UserFields } }`,
   BranchFields: `fragment BranchFields on Branch { id code name kind phone gstin stateCode active address { ...AddressFields } }`,
   OrganizationFields: `fragment OrganizationFields on Organization {
     id name code legalName gstin phone email address { ...AddressFields } branches { ...BranchFields }
@@ -114,6 +115,7 @@ export const FRAGMENTS: Record<string, string> = {
   CsvFileFields: `fragment CsvFileFields on CsvFile { fileName mimeType content }`,
 
   DocumentFields: `fragment DocumentFields on Document { format fileName mimeType byteLength base64 html }`,
+  JobFields: `fragment JobFields on Job { id kind state attempts error createdAt finishedAt document { ...DocumentFields } }`,
 };
 
 /** Appends every fragment the document spreads, transitively, once each. */
@@ -167,8 +169,9 @@ export const OPERATIONS = {
     field: "viewer",
     document: `query Can($permission: String!, $branchId: ID) { viewer { can(permission: $permission, branchId: $branchId) } }`,
   } as Operation,
-  login: m("login", "$input: LoginInput!", "token expiresAt user { ...UserFields }"),
-  logout: m("logout", ""),
+  login: m("login", "$input: LoginInput!", "...LoginResultFields"),
+  refreshSession: m("refreshSession", "$refreshToken: String!, $device: DeviceInput", "...LoginResultFields"),
+  logout: m("logout", "$refreshToken: String"),
   logoutOtherSessions: m("logoutOtherSessions", ""),
   revokeSession: m("revokeSession", "$id: ID!"),
   changePassword: m("changePassword", "$currentPassword: String!, $newPassword: String!"),
@@ -444,6 +447,8 @@ export const OPERATIONS = {
     "$bookingId: ID!, $reportIds: [ID!], $format: DocumentFormat, $variant: ReportVariant, $design: ReportDesign",
     "...DocumentFields",
   ),
+  job: q("job", "$id: ID!", "...JobFields"),
+  startDocumentJob: m("startDocumentJob", "$input: DocumentJobInput!", "...JobFields"),
 } satisfies Record<string, Operation>;
 
 export type OperationName = keyof typeof OPERATIONS;

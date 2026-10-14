@@ -77,13 +77,9 @@ flowchart LR
 ```ts
 import { createMgplGraphQLClient, documentBlob, openBlob, MgplGraphQLError } from "@mgpl-diagnostics/client";
 
-const mgpl = createMgplGraphQLClient({
-  url: "https://api.your-lab.in/graphql",
-  token: sessionStorage.getItem("mgpl-token"),                 // optional starting token
-  onToken: (t) => (t ? sessionStorage.setItem("mgpl-token", t) : sessionStorage.removeItem("mgpl-token")),
-});
+const mgpl = createMgplGraphQLClient({ url: "https://api.your-lab.in/graphql" });
 
-await mgpl.auth.login({ email: "desk@your-lab.in", password });  // keeps the token
+await mgpl.auth.login({ email: "desk@your-lab.in", password });  // access + refresh tokens, refreshed for you
 const [hit] = await mgpl.catalog.search("cbc");
 const patient = await mgpl.patients.register({ branchId, name: "Kavita Sharma", sex: "female", ageYears: 32 });
 const { booking } = await mgpl.bookings.create({ branchId, patientId: patient.id, tests: [{ testCode: hit!.test.code! }] });
@@ -100,6 +96,12 @@ try {
   if (e instanceof MgplGraphQLError && e.code === "FORBIDDEN") alert("Ask an accountant");
 }
 ```
+
+**Sessions work with any library.** `mgpl.session` is a framework-agnostic session manager: access and
+refresh tokens, automatic single-flight refresh (across tabs too), device signals bound to the refresh
+token, `subscribe` / `getSnapshot` for React, Vue, Svelte or Solid, `session.fetch` for Apollo, urql or
+graphql-request, and `mgplQuery` / `mgplMutation` / `mgplFetcher` for TanStack Query and SWR. See
+[docs/session.md](docs/session.md).
 
 Namespaces: `auth`, `users`, `organization`, `catalog`, `patients`, `doctors`, `bookings`, `samples`,
 `reports`, `invoices`, `books`, `gst`, `receivables`, `settlements`, `cash`, `bank`, `periods`, `exports`,

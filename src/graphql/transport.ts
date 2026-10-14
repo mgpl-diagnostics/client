@@ -1,13 +1,19 @@
 // The GraphQL transport: one POST per operation to the backend's single endpoint (mgpl-diagnostics/api).
+import type { SessionManager } from "./session";
 
 export interface GraphQLClientOptions {
   /** The endpoint: "/graphql" (same origin) or "https://api.your-lab.in/graphql". */
   url?: string;
   /** Custom fetch (tests, SSR, retry wrappers). */
   fetch?: typeof fetch;
-  /** Starting session token (e.g. read from your own storage). `login` sets it; `logout` clears it. */
+  /**
+   * The session manager (tokens, refresh, device signals). The GraphQL client creates one in memory
+   * when you don't pass it; pass your own for persistence, cross-tab sync or sharing with other libraries.
+   */
+  session?: SessionManager;
+  /** Starting access token (without a session manager, or to seed the default one). */
   token?: string | null;
-  /** Called whenever the token changes, so the app can persist it where it wants (or nowhere). */
+  /** Called whenever the access token changes (login, refresh, logout). */
   onToken?: (token: string | null) => void;
   /** Extra headers on every request. */
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
@@ -46,21 +52,15 @@ export type Variables = Record<string, unknown>;
 export function createTransport(opts: GraphQLClientOptions = {}) {
   const url = opts.url ?? "/graphql";
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  const session = opts.session;
   let token: string | null = opts.token ?? null;
 
-  return {
-    url,
-    getToken: () => token,
-    setToken(next: string | null) {
-      token = next;
-      opts.onToken?.(next);
-    },
-    /** Runs any operation. Throws MgplGraphQLError on errors; returns `data` otherwise. */
-    async request<T = unknown>(query: string, variables?: Variables, init: { signal?: AbortSignal } = {}): Promise<T> {
+  async function once<T>(query: string, variables: Variables | undefined, init: { signal?: AbortSignal }): Promise<T> {
       const headers = new Headers(typeof opts.headers === "function" ? await opts.headers() : opts.headers);
       headers.set("content-type", "application/json");
       headers.set("accept", "application/graphql-response+json, application/json");
-      if (token) headers.set("authorization", `Bearer ${token}`);
+      const bearer = session ? await session.accessToken() : token;
+      if (bearer) headers.set("authorization", `Bearer ${bearer}`);
       let res: Response;
       try {
         res = await doFetch(url, { method: "POST", headers, credentials: opts.credentials, body: JSON.stringify({ query, variables }), signal: init.signal });
@@ -76,6 +76,35 @@ export function createTransport(opts: GraphQLClientOptions = {}) {
       if (body?.errors?.length) throw new MgplGraphQLError(body.errors.map((e) => e.message).join("; "), body.errors, res.status, body.data);
       if (!res.ok || body?.data == null) throw new MgplGraphQLError(`${res.status} ${res.statusText}`.trim(), [], res.status);
       return body.data;
+  }
+
+  return {
+    url,
+    session,
+    getToken: () => (session ? (session.current()?.accessToken ?? null) : token),
+    /** Sets (or clears) the access token by hand. With a session manager, prefer session.signIn. */
+    setToken(next: string | null) {
+      if (session) {
+        if (next) session.signIn({ ...session.current(), accessToken: next });
+        else session.signOut("logout");
+      } else {
+        token = next;
+        opts.onToken?.(next);
+      }
+    },
+    /**
+     * Runs any operation. Throws MgplGraphQLError on errors; returns `data` otherwise. With a session,
+     * an UNAUTHENTICATED answer triggers one refresh and one retry.
+     */
+    async request<T = unknown>(query: string, variables?: Variables, init: { signal?: AbortSignal } = {}): Promise<T> {
+      try {
+        return await once<T>(query, variables, init);
+      } catch (e) {
+        if (session && e instanceof MgplGraphQLError && e.code === "UNAUTHENTICATED" && session.current()?.refreshToken && (await session.refresh())) {
+          return once<T>(query, variables, init);
+        }
+        throw e;
+      }
     },
   };
 }
