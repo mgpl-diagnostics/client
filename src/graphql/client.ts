@@ -2,6 +2,8 @@
 // (mgpl-diagnostics/api, POST /graphql). Zero dependencies: operations are plain strings.
 import type { InvoiceRequest, InvoiceTotals, ReportRequest } from "../types";
 import { OPERATIONS, type Operation } from "./operations";
+import { createDeviceCollector, type DeviceCollector } from "./device";
+import { createSessionManager, memorySessionStorage } from "./session";
 import { createTransport, type GraphQLClientOptions, type Variables } from "./transport";
 import type * as T from "./types";
 
@@ -9,8 +11,28 @@ type Page = { limit?: number; offset?: number };
 type Range = { from: T.DateTime; to: T.DateTime };
 type Csv = { bom?: boolean };
 
-export function createMgplGraphQLClient(opts: GraphQLClientOptions = {}) {
-  const transport = createTransport(opts);
+export interface MgplGraphQLClientOptions extends GraphQLClientOptions {
+  /** Device signals for the default session manager (ignored when you pass `session`). false: none. */
+  device?: DeviceCollector | false;
+}
+
+export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
+  const session =
+    opts.session ??
+    createSessionManager({
+      url: opts.url,
+      fetch: opts.fetch,
+      storage: memorySessionStorage(opts.token ? { accessToken: opts.token } : null),
+      device: opts.device === false ? false : (opts.device ?? createDeviceCollector()),
+    });
+  if (opts.onToken) {
+    let last = session.current()?.accessToken ?? null;
+    session.subscribe(() => {
+      const t = session.current()?.accessToken ?? null;
+      if (t !== last) opts.onToken!((last = t));
+    });
+  }
+  const transport = createTransport({ ...opts, session });
 
   /** Runs one operation and returns its root field. */
   async function run<R>(operation: Operation, variables?: Variables, signal?: AbortSignal): Promise<R> {
@@ -25,23 +47,31 @@ export function createMgplGraphQLClient(opts: GraphQLClientOptions = {}) {
     request: transport.request,
     getToken: transport.getToken,
     setToken: transport.setToken,
+    /** Tokens, refresh, device signals and change events: share it with any UI or data library. */
+    session,
 
     health: () => run<T.Health>(O.health),
     ping: () => run<string>(O.ping),
 
     auth: {
-      /** Signs in and keeps the session token for every later call (see `onToken` to persist it). */
+      /** Signs in (with this device's signals) and keeps the tokens in the session manager. */
       async login(input: T.LoginInput): Promise<T.LoginResult> {
-        const result = await run<T.LoginResult>(O.login, { input });
-        transport.setToken(result.token);
+        const device = input.device ?? (await session.device());
+        const result = await run<T.LoginResult>(O.login, { input: { ...input, device } });
+        session.signIn(result);
         return result;
       },
-      /** Ends this session on the server and forgets the token. */
+      /** Trades the refresh token for new tokens now (the client also does it by itself when needed). */
+      refresh: () => session.refresh(),
+      /** Ends this session on the server (by its refresh token, so an expired access token is fine) and forgets the tokens. */
       async logout(): Promise<void> {
+        const cur = session.current();
         try {
-          if (transport.getToken()) await run<boolean>(O.logout);
+          if (cur) await transport.request(O.logout.document, { refreshToken: cur.refreshToken ?? undefined });
+        } catch {
+          /* already ended on the server */
         } finally {
-          transport.setToken(null);
+          session.signOut("logout");
         }
       },
       /** The signed-in user, organisation and permissions; null when the token is missing or expired. */
@@ -272,6 +302,23 @@ export function createMgplGraphQLClient(opts: GraphQLClientOptions = {}) {
       /** A booking's verified or released reports printed together (or only `reportIds`). */
       bookingReports: (bookingId: T.ID, o: Omit<T.RenderOptions, "fileName"> & { reportIds?: T.ID[] } = {}) =>
         run<T.RenderedDocument>(O.bookingReportDocument, { bookingId, ...o }),
+      /** Renders a stored invoice or a booking's reports in the background worker. */
+      startJob: (input: T.DocumentJobInput) => run<T.Job>(O.startDocumentJob, { input }),
+      /** A job you started; null when unknown or expired. */
+      job: (id: T.ID) => run<T.Job | null>(O.job, { id }),
+      /** Polls a job until it is completed (returns it) or failed (throws). */
+      async waitForJob(id: T.ID, o: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T.Job> {
+        const end = Date.now() + (o.timeoutMs ?? 120_000);
+        for (;;) {
+          const job = await run<T.Job | null>(O.job, { id }, o.signal);
+          if (!job) throw new Error(`Job ${id} not found`);
+          if (job.state === "completed") return job;
+          if (job.state === "failed") throw new Error(job.error ?? "Job failed");
+          if (Date.now() > end) throw new Error(`Job ${id} is still ${job.state}`);
+          await new Promise((r) => setTimeout(r, o.intervalMs ?? 1000));
+          o.signal?.throwIfAborted();
+        }
+      },
     },
   };
 }

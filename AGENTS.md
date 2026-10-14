@@ -23,7 +23,10 @@ the backend. Apps build their own UI/UX on top.
    schema and checks that every root field has one; when the API adds or renames a field, update
    `operations.ts`, `types.ts` and `client.ts` here, release, then bump the client ref in api's `kits.json`.
 5. **Routes** are in `ROUTES` in `src/index.ts` and must match report-kit `src/shared/api.ts` + invoice-kit `INVOICE_ROUTES`.
-6. `src/react.tsx` gets a `"use client"` banner from tsup (see `tsup.config.ts`); the main entry must not,
+6. **Sessions stay library-agnostic.** No data or state library is imported: adapters return plain objects
+   and functions (`{ queryKey, queryFn }`, a `fetch`, `subscribe`/`getSnapshot`). Device signals are listed in
+   docs/session.md; collect nothing new without adding it there (no canvas, audio or font probing).
+7. `src/react.tsx` gets a `"use client"` banner from tsup (see `tsup.config.ts`); the main entry must not,
    so it stays usable from Server Components, workers and Node scripts.
 
 ## Map
@@ -32,12 +35,15 @@ the backend. Apps build their own UI/UX on top.
 src/types.ts    contract types (Patient, ReportRequest, TemplateCatalog, InvoiceInput, InvoiceTotals, …)
 src/index.ts    createMgplClient (reports.*, invoices.*, health, url), MgplApiError, ROUTES, downloadBlob/openBlob/printBlob
 src/graphql/
-  transport.ts  createTransport (POST, Bearer token, onToken), MgplGraphQLError (code from extensions.code)
+  transport.ts  createTransport (POST, Bearer from the session, one refresh + retry on UNAUTHENTICATED), MgplGraphQLError
+  session.ts    createSessionManager (tokens, single-flight refresh, Web Locks, subscribe/getSnapshot/store, fetch), storages
+  device.ts     createDeviceCollector: deviceId, clientSessionId, fingerprint, info. Imports nothing (moves to security-kit)
+  query.ts      mgplQuery / mgplMutation / mgplKey / mgplFetcher / clearOnSignOut (TanStack Query, SWR; no dependency)
   operations.ts FRAGMENTS + OPERATIONS (one per Query/Mutation field), withFragments
   client.ts     createMgplGraphQLClient (auth, users, organization, catalog, patients, … documents), documentBlob, csvBlob
   types.ts      the API's GraphQL types as selected by operations.ts, plus inputs
   index.ts      the "/graphql" entry (types flat); the main entry re-exports the client, types under `Gql`
-src/react.tsx   useAsync, useTemplates, useReportHtml, useInvoiceHtml, useInvoiceTotals, usePdfUrl, HtmlFrame
+src/react.tsx   useMgplSession, useAsync, useTemplates, useReportHtml, useInvoiceHtml, useInvoiceTotals, usePdfUrl, HtmlFrame
 ```
 
 ## Commands

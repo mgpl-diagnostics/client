@@ -10,14 +10,17 @@ sequenceDiagram
   participant C as createMgplGraphQLClient
   participant API as api (POST /graphql)
   App->>C: auth.login({ email, password })
-  C->>API: mutation Login
-  API-->>C: { token, expiresAt, user }
-  C->>C: setToken(token), onToken(token)
+  C->>API: mutation Login (+ device signals)
+  API-->>C: { accessToken, refreshToken, user }
+  C->>C: session.signIn(…)
   App->>C: invoices.issue({...})
-  C->>API: mutation IssueInvoice (Authorization: Bearer token)
+  C->>API: mutation IssueInvoice (Authorization: Bearer accessToken, refreshed first when it expires)
   API-->>C: data.issueInvoice
   C-->>App: Invoice
 ```
+
+Tokens, automatic refresh, device signals and use with TanStack Query, SWR, Apollo, urql or any other
+library: [session.md](session.md).
 
 ## Options
 
@@ -25,15 +28,18 @@ sequenceDiagram
 createMgplGraphQLClient({
   url?: string;                    // default "/graphql"
   fetch?: typeof fetch;            // tests, SSR, retry wrappers
-  token?: string | null;           // starting session token
-  onToken?: (token: string | null) => void; // persist it where you want (or nowhere)
+  session?: SessionManager;        // tokens + refresh + device signals (default: one in memory)
+  device?: DeviceCollector | false; // for the default session manager
+  token?: string | null;           // starting access token
+  onToken?: (token: string | null) => void; // called when the access token changes
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
   credentials?: RequestCredentials;
 });
 ```
 
-The client keeps the token in memory. `auth.login` sets it, `auth.logout` ends the session on the server
-and clears it, and `setToken` / `getToken` let the app manage it directly.
+The client keeps the tokens in its session manager (`client.session`). `auth.login` fills it,
+`auth.logout` ends the session on the server and clears it, and requests refresh the access token by
+themselves. See [session.md](session.md).
 
 ## Conventions
 
@@ -92,8 +98,9 @@ docs (`docs/04-api-reference.md`).
 
 | Method | GraphQL |
 |---|---|
-| `login` | mutation `login` |
-| `logout` | mutation `logout` |
+| `login` | mutation `login` (adds device signals) |
+| `refresh` | mutation `refreshSession` (also automatic) |
+| `logout` | mutation `logout` (by refresh token) |
 | `viewer` | query `viewer` |
 | `can` | query `viewer { can }` |
 | `sessions` | query `mySessions` |
@@ -318,3 +325,6 @@ docs (`docs/04-api-reference.md`).
 | `letterhead` | query `letterhead` |
 | `invoice` | query `invoiceDocument` |
 | `bookingReports` | query `bookingReportDocument` |
+| `startJob` | mutation `startDocumentJob` (rendered by the API's worker) |
+| `job` | query `job` |
+| `waitForJob` | polls query `job` until completed or failed |

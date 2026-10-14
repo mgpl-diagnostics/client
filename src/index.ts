@@ -24,8 +24,22 @@ export {
   OPERATIONS,
   FRAGMENTS,
   withFragments,
+  createSessionManager,
+  memorySessionStorage,
+  webSessionStorage,
+  createDeviceCollector,
+  clearOnSignOut,
+  mgplFetcher,
+  mgplKey,
+  mgplMutation,
+  mgplQuery,
+  runOperation,
 } from "./graphql/index";
-export type { MgplGraphQLClient, GraphQLClientOptions, GraphQLErrorItem, Operation, OperationName } from "./graphql/index";
+export type {
+  MgplGraphQLClient, MgplGraphQLClientOptions, GraphQLClientOptions, GraphQLErrorItem, Operation, OperationName,
+  SessionManager, SessionManagerOptions, SessionSnapshot, SessionStatus, SessionStorage, SignOutReason, StoredSession,
+  DeviceCollector, DeviceOptions, DeviceSignals, DeviceStore, RequestClient,
+} from "./graphql/index";
 export type * as Gql from "./graphql/types";
 
 /** Default mount point of the backend */
