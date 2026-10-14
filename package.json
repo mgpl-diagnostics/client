@@ -1,7 +1,7 @@
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.0.0",
-  "description": "Headless browser SDK for the MGPL Diagnostics backend (reports + invoices). Zero dependencies, no UI — build your own.",
+  "version": "1.1.0",
+  "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI \u2014 build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "repository": "github:mgpl-diagnostics/client",
@@ -12,6 +12,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./graphql": {
+      "types": "./dist/graphql.d.ts",
+      "import": "./dist/graphql.js"
     },
     "./react": {
       "types": "./dist/react.d.ts",

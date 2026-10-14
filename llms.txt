@@ -3,6 +3,7 @@
 > Headless, zero-dependency TypeScript SDK for browsers (or any fetch runtime) that talks to the MGPL Diagnostics backend (`createMgplApi` / `createReportApi`). It requests lab reports and invoices as PDF Blobs, HTML strings or JSON, and fetches the test catalog and price list. It has no UI and no CSS; apps build their own UI/UX. Optional unstyled React hooks live in "@mgpl-diagnostics/client/react".
 
 Key facts for agents:
+- GraphQL (mgpl-diagnostics/api, one endpoint for everything): `const mgpl = createMgplGraphQLClient({ url: "/graphql", token?, onToken? })`; `await mgpl.auth.login({ email, password })` keeps the token. Namespaces: auth, users, organization, catalog, patients, doctors, bookings, samples, reports, invoices, books, gst, receivables, settlements, cash, bank, periods, exports, documents; `request(query, vars)` for custom selections. Errors throw `MgplGraphQLError` with `code`. Money in paise; documents are base64 PDFs or HTML (`documentBlob`). Types flat in "@mgpl-diagnostics/client/graphql" or under `Gql`.
 - `const mgpl = createMgplClient({ baseUrl: "/api/mgpl", headers?, credentials?, fetch? })`.
 - Reports: `mgpl.reports.templates()`, `.pdf(req)`, `.html(req)`, `.letterheadPdf()`, `.samples()`. Invoices: `mgpl.invoices.totals(invoice)`, `.pdf(req)`, `.html(req)`, `.priceList()`.
 - Build entry forms from `templates()`: each template lists `fields` (key, label, unit, range); send `{ patient, tests: [{ template, results: { [key]: value } }] }`.
@@ -13,6 +14,7 @@ Key facts for agents:
 ## Docs
 
 - [README](README.md): why, quick start, SDK table, React hooks, errors and auth
+- [GraphQL client](docs/graphql.md): every method, the operation it runs, errors, conventions
 - [API reference](docs/api.md): every method, option and type
 - [AGENTS.md](AGENTS.md): rules (no deps, no UI, mirrored contract)
 - [llms-full.txt](llms-full.txt): everything above plus the source
@@ -20,5 +22,8 @@ Key facts for agents:
 ## Source
 
 - [src/index.ts](src/index.ts): createMgplClient, helpers
+- [src/graphql/client.ts](src/graphql/client.ts): createMgplGraphQLClient, documentBlob, csvBlob
+- [src/graphql/operations.ts](src/graphql/operations.ts): fragments and operations
+- [src/graphql/types.ts](src/graphql/types.ts): GraphQL result and input types
 - [src/react.tsx](src/react.tsx): hooks and HtmlFrame
 - [src/types.ts](src/types.ts): contract types
