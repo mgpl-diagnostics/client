@@ -119,8 +119,12 @@ because browser updates change it.
 | --- | --- | --- |
 | `deviceId` | random id, created once | `localStorage` key `mgpl.deviceId` (memory where unavailable) |
 | `clientSessionId` | random id per tab or app run | `sessionStorage` key `mgpl.tabId` |
-| `fingerprint` | SHA-256 of `info` (43 characters) | WebCrypto |
-| `info` | `platform`, `mobile`, `language`, `languages`, `timezone`, `screen`, `colorDepth`, `pixelRatio`, `cores`, `memoryGb`, `touchPoints`, `userAgent` | `navigator`, `screen`, `Intl` |
+| `fingerprint` | SHA-256 (32 hex characters) of OS, browser family, mobile, platform, language, time zone, screen size, colour depth, CPU cores, device memory and touch points; the browser version is left out so updates don't change it | WebCrypto |
+| `info` | `os`, `browser`, `browserVersion` (major only), `mobile`, `language`, `timezone`, `screen`, plus your `extraInfo` | `navigator`, `screen`, `Intl` |
+
+The values are collected by [security-kit](https://github.com/mgpl-diagnostics/security-kit)
+(`@mgpl-diagnostics/security-kit/browser`), which is bundled into this package, so the SDK still has no
+runtime dependency. Devices that signed in before 1.3.0 keep their `deviceId`.
 
 Nothing else is read: no canvas, audio, font or IP probing, and no third-party script. Tell your users
 in your privacy notice that these values are used to keep their account secure.
@@ -131,10 +135,17 @@ import { createDeviceCollector } from "@mgpl-diagnostics/client";
 const device = createDeviceCollector({
   store: secureStoreAdapter,                                      // React Native: keep the id in SecureStore
   extraInfo: () => ({ appVersion: "2.3.0", model: Device.modelName }),
-  exclude: ["userAgent"],
+  exclude: ["screen"],
 });
 const session = createSessionManager({ url, device });             // or device: false to send none
 ```
 
-The signal code lives in `src/graphql/device.ts` alone and imports nothing, so it can move to
-security-kit as it is.
+To share one collector with the rest of your app (for example security-kit's `signalFetch` or
+`useDeviceSignals`), pass it in:
+
+```ts
+import { createSignalCollector } from "@mgpl-diagnostics/security-kit/browser";
+
+const signals = createSignalCollector({ app: "lab-panel@1.4.0" });
+const device = createDeviceCollector({ signals }); // the session manager sends the same ids
+```

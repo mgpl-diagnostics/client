@@ -13,6 +13,8 @@ the backend. Apps build their own UI/UX on top.
 ## Rules
 
 1. **No runtime dependencies.** Not even React in the main entry; React is an optional peer used only by `src/react.tsx`.
+   `@mgpl-diagnostics/security-kit` is a dev dependency **bundled into dist** (`noExternal` in `tsup.config.ts`);
+   public types must not import from it (`SignalSource` is structural).
 2. **No UI.** No styled components, no CSS, no layout decisions. `HtmlFrame` is a bare iframe that
    accepts `className`/`style`. If you feel the need for a component with looks, it belongs in the app.
 3. **The contract is mirrored, not imported.** `src/types.ts` mirrors report-kit's `src/shared/api.ts` /
@@ -37,7 +39,7 @@ src/index.ts    createMgplClient (reports.*, invoices.*, health, url), MgplApiEr
 src/graphql/
   transport.ts  createTransport (POST, Bearer from the session, one refresh + retry on UNAUTHENTICATED), MgplGraphQLError
   session.ts    createSessionManager (tokens, single-flight refresh, Web Locks, subscribe/getSnapshot/store, fetch), storages
-  device.ts     createDeviceCollector: deviceId, clientSessionId, fingerprint, info. Imports nothing (moves to security-kit)
+  device.ts     createDeviceCollector: maps @mgpl-diagnostics/security-kit's signals to DeviceInput (deviceId, clientSessionId, fingerprint, info)
   query.ts      mgplQuery / mgplMutation / mgplKey / mgplFetcher / clearOnSignOut (TanStack Query, SWR; no dependency)
   operations.ts FRAGMENTS + OPERATIONS (one per Query/Mutation field), withFragments
   client.ts     createMgplGraphQLClient (auth, users, organization, catalog, patients, … documents), documentBlob, csvBlob
