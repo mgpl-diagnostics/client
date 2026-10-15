@@ -267,6 +267,8 @@ the backend. Apps build their own UI/UX on top.
 ## Rules
 
 1. **No runtime dependencies.** Not even React in the main entry; React is an optional peer used only by `src/react.tsx`.
+   `@mgpl-diagnostics/security-kit` is a dev dependency **bundled into dist** (`noExternal` in `tsup.config.ts`);
+   public types must not import from it (`SignalSource` is structural).
 2. **No UI.** No styled components, no CSS, no layout decisions. `HtmlFrame` is a bare iframe that
    accepts `className`/`style`. If you feel the need for a component with looks, it belongs in the app.
 3. **The contract is mirrored, not imported.** `src/types.ts` mirrors report-kit's `src/shared/api.ts` /
@@ -291,7 +293,7 @@ src/index.ts    createMgplClient (reports.*, invoices.*, health, url), MgplApiEr
 src/graphql/
   transport.ts  createTransport (POST, Bearer from the session, one refresh + retry on UNAUTHENTICATED), MgplGraphQLError
   session.ts    createSessionManager (tokens, single-flight refresh, Web Locks, subscribe/getSnapshot/store, fetch), storages
-  device.ts     createDeviceCollector: deviceId, clientSessionId, fingerprint, info. Imports nothing (moves to security-kit)
+  device.ts     createDeviceCollector: maps @mgpl-diagnostics/security-kit's signals to DeviceInput (deviceId, clientSessionId, fingerprint, info)
   query.ts      mgplQuery / mgplMutation / mgplKey / mgplFetcher / clearOnSignOut (TanStack Query, SWR; no dependency)
   operations.ts FRAGMENTS + OPERATIONS (one per Query/Mutation field), withFragments
   client.ts     createMgplGraphQLClient (auth, users, organization, catalog, patients, … documents), documentBlob, csvBlob
@@ -861,8 +863,12 @@ because browser updates change it.
 | --- | --- | --- |
 | `deviceId` | random id, created once | `localStorage` key `mgpl.deviceId` (memory where unavailable) |
 | `clientSessionId` | random id per tab or app run | `sessionStorage` key `mgpl.tabId` |
-| `fingerprint` | SHA-256 of `info` (43 characters) | WebCrypto |
-| `info` | `platform`, `mobile`, `language`, `languages`, `timezone`, `screen`, `colorDepth`, `pixelRatio`, `cores`, `memoryGb`, `touchPoints`, `userAgent` | `navigator`, `screen`, `Intl` |
+| `fingerprint` | SHA-256 (32 hex characters) of OS, browser family, mobile, platform, language, time zone, screen size, colour depth, CPU cores, device memory and touch points; the browser version is left out so updates don't change it | WebCrypto |
+| `info` | `os`, `browser`, `browserVersion` (major only), `mobile`, `language`, `timezone`, `screen`, plus your `extraInfo` | `navigator`, `screen`, `Intl` |
+
+The values are collected by [security-kit](https://github.com/mgpl-diagnostics/security-kit)
+(`@mgpl-diagnostics/security-kit/browser`), which is bundled into this package, so the SDK still has no
+runtime dependency. Devices that signed in before 1.3.0 keep their `deviceId`.
 
 Nothing else is read: no canvas, audio, font or IP probing, and no third-party script. Tell your users
 in your privacy notice that these values are used to keep their account secure.
@@ -873,13 +879,20 @@ import { createDeviceCollector } from "@mgpl-diagnostics/client";
 const device = createDeviceCollector({
   store: secureStoreAdapter,                                      // React Native: keep the id in SecureStore
   extraInfo: () => ({ appVersion: "2.3.0", model: Device.modelName }),
-  exclude: ["userAgent"],
+  exclude: ["screen"],
 });
 const session = createSessionManager({ url, device });             // or device: false to send none
 ```
 
-The signal code lives in `src/graphql/device.ts` alone and imports nothing, so it can move to
-security-kit as it is.
+To share one collector with the rest of your app (for example security-kit's `signalFetch` or
+`useDeviceSignals`), pass it in:
+
+```ts
+import { createSignalCollector } from "@mgpl-diagnostics/security-kit/browser";
+
+const signals = createSignalCollector({ app: "lab-panel@1.4.0" });
+const device = createDeviceCollector({ signals }); // the session manager sends the same ids
+```
 
 
 ---
@@ -929,8 +942,8 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.2.0",
-  "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI \u2014 build your own.",
+  "version": "1.3.0",
+  "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "repository": "github:mgpl-diagnostics/client",
@@ -979,6 +992,7 @@ Key facts for agents:
     }
   },
   "devDependencies": {
+    "@mgpl-diagnostics/security-kit": "^0.2.0",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",
     "tsup": "^8.5.0",
@@ -1408,16 +1422,25 @@ export function csvBlob(file: T.CsvFile): Blob {
 ## File: src/graphql/device.ts
 
 ```ts
-// Device signals for login and refresh: a device id, a coarse fingerprint, a per-tab session id and a
-// few descriptive values. Self-contained (no imports) so it can move to security-kit unchanged.
+// Device signals for login and refresh, collected by @mgpl-diagnostics/security-kit (bundled into this
+// package at build time, so the SDK keeps zero runtime dependencies). This module maps security-kit's
+// signals to the API's DeviceInput; the GraphQL contract is unchanged.
 // Works in browsers, React Native, workers and Node: every source is optional and feature-detected.
 //
 // What is collected (and nothing else):
 //   deviceId         random id created once, kept in localStorage (or your store): NOT derived from the device
 //   clientSessionId  random id per tab (sessionStorage) or per app run
-//   fingerprint      SHA-256 of the `info` values below (no canvas, audio or font probing)
-//   info             platform, language(s), timezone, screen size, colour depth, pixel ratio, CPU cores,
-//                    device memory, touch points, user agent (trimmed)
+//   fingerprint      SHA-256 (32 hex) of coarse attributes: OS, browser family, mobile, platform, language,
+//                    timezone, screen size, colour depth, CPU cores, device memory, touch points
+//   info             os, browser, browserVersion (major), mobile, language, timezone, screen
+//                    (no canvas, audio or font probing, no full user agent)
+import {
+  createSignalCollector,
+  deviceInfo as signalDeviceInfo,
+  randomId as signalRandomId,
+  toBase64Url,
+  webStorage,
+} from "@mgpl-diagnostics/security-kit/browser";
 
 export interface DeviceSignals {
   deviceId?: string;
@@ -1428,8 +1451,23 @@ export interface DeviceSignals {
 
 /** Where the device id and tab id live. Defaults: localStorage / sessionStorage when present, else memory. */
 export interface DeviceStore {
-  get(key: string): string | null | Promise<string | null>;
+  get(key: string): string | null | undefined | Promise<string | null | undefined>;
   set(key: string, value: string): void | Promise<void>;
+  remove?(key: string): void | Promise<void>;
+}
+
+/**
+ * A security-kit collector (`createSignalCollector` from "@mgpl-diagnostics/security-kit/browser"), to
+ * share one collector between this SDK and the rest of the app. Only the parts used here.
+ */
+export interface SignalSource {
+  collect(): Promise<{
+    deviceId: string;
+    tabId: string;
+    fingerprint: string;
+    device: { os: string; browser: string; browserVersion: string; mobile: boolean; language: string; timezone: string; screen: string };
+    app?: string;
+  }>;
 }
 
 export interface DeviceOptions {
@@ -1439,8 +1477,10 @@ export interface DeviceOptions {
   tabStore?: DeviceStore;
   /** Your own values (app version, native device model, …); merged into `info`. */
   extraInfo?: () => Record<string, string | number | boolean> | Promise<Record<string, string | number | boolean>>;
-  /** Leave values out of `info` (and so out of the fingerprint), e.g. ["userAgent"]. */
+  /** Leave values out of `info`, e.g. ["screen"]. */
   exclude?: string[];
+  /** Use this security-kit collector instead of creating one (`store` / `tabStore` are then ignored). */
+  signals?: SignalSource;
 }
 
 export interface DeviceCollector {
@@ -1448,99 +1488,36 @@ export interface DeviceCollector {
   get(): Promise<DeviceSignals>;
 }
 
-const g = globalThis as any;
-
-function memoryStore(): DeviceStore {
-  const m = new Map<string, string>();
-  return { get: (k) => m.get(k) ?? null, set: (k, v) => void m.set(k, v) };
-}
-
-function webStore(name: "localStorage" | "sessionStorage"): DeviceStore | null {
-  try {
-    const s: Storage | undefined = g[name];
-    if (!s) return null;
-    const probe = "__mgpl_probe__";
-    s.setItem(probe, "1");
-    s.removeItem(probe);
-    return { get: (k) => s.getItem(k), set: (k, v) => s.setItem(k, v) };
-  } catch {
-    return null; // private mode, sandboxed iframe, SSR
-  }
-}
-
-/** A random URL-safe id (crypto.randomUUID or getRandomValues). */
+/** A random URL-safe id (128 bits, base64url). */
 export function randomId(prefix = ""): string {
-  if (typeof g.crypto?.randomUUID === "function") return prefix + g.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (typeof g.crypto?.getRandomValues === "function") g.crypto.getRandomValues(bytes);
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  return prefix + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return prefix + signalRandomId();
 }
 
-/** The descriptive values a browser (or runtime) exposes. Missing ones are left out. */
+/** The descriptive values sent as `info` (security-kit's coarse device info). */
 export function deviceInfo(): Record<string, string | number | boolean> {
-  const out: Record<string, string | number | boolean> = {};
-  const put = (k: string, v: unknown) => {
-    if (typeof v === "string" && v) out[k] = v.slice(0, 200);
-    else if ((typeof v === "number" && Number.isFinite(v)) || typeof v === "boolean") out[k] = v;
-  };
-  const nav = g.navigator;
-  put("platform", nav?.userAgentData?.platform || nav?.platform);
-  put("mobile", nav?.userAgentData?.mobile);
-  put("language", nav?.language);
-  put("languages", Array.isArray(nav?.languages) ? nav.languages.slice(0, 5).join(",") : undefined);
-  try {
-    put("timezone", Intl.DateTimeFormat().resolvedOptions().timeZone);
-  } catch {
-    /* no Intl */
-  }
-  put("screen", g.screen ? `${g.screen.width}x${g.screen.height}` : undefined);
-  put("colorDepth", g.screen?.colorDepth);
-  put("pixelRatio", g.devicePixelRatio);
-  put("cores", nav?.hardwareConcurrency);
-  put("memoryGb", nav?.deviceMemory);
-  put("touchPoints", nav?.maxTouchPoints);
-  put("userAgent", nav?.userAgent);
-  return out;
+  return { ...signalDeviceInfo() };
 }
-
-const b64url = (bytes: Uint8Array) => {
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-};
 
 /** SHA-256 of the info values, base64url (43 characters); undefined where WebCrypto is missing. */
 export async function fingerprintOf(info: Record<string, string | number | boolean>): Promise<string | undefined> {
-  const subtle = g.crypto?.subtle;
+  const subtle = (globalThis as { crypto?: Crypto }).crypto?.subtle;
   if (!subtle || typeof TextEncoder === "undefined") return undefined;
   const text = JSON.stringify(Object.keys(info).sort().map((k) => [k, info[k]]));
-  return b64url(new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode(text))));
+  return toBase64Url(new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode(text))));
 }
 
 /** Collects the signals the SDK sends with login and refresh. */
 export function createDeviceCollector(o: DeviceOptions = {}): DeviceCollector {
-  const store = o.store ?? webStore("localStorage") ?? memoryStore();
-  const tabStore = o.tabStore ?? webStore("sessionStorage") ?? memoryStore();
+  // same storage keys as before (mgpl.deviceId, mgpl.tabId), so existing devices keep their ids
+  const signals = o.signals ?? createSignalCollector({ storage: o.store ?? webStorage("local"), tabStorage: o.tabStore ?? webStorage("session") });
   let cached: Promise<DeviceSignals> | undefined;
-  const idFrom = async (s: DeviceStore, key: string, prefix: string) => {
-    const have = await s.get(key);
-    if (have && /^[A-Za-z0-9_.:+/=-]{8,128}$/.test(have)) return have;
-    const id = randomId(prefix);
-    await s.set(key, id);
-    return id;
-  };
   return {
     get() {
       return (cached ??= (async () => {
-        const info = { ...deviceInfo(), ...((await o.extraInfo?.()) ?? {}) };
+        const s = await signals.collect();
+        const info: Record<string, string | number | boolean> = { ...s.device, ...(s.app ? { app: s.app } : {}), ...((await o.extraInfo?.()) ?? {}) };
         for (const k of o.exclude ?? []) delete info[k];
-        return {
-          deviceId: await idFrom(store, "mgpl.deviceId", "dev-"),
-          clientSessionId: await idFrom(tabStore, "mgpl.tabId", "tab-"),
-          fingerprint: await fingerprintOf(info),
-          info,
-        };
+        return { deviceId: s.deviceId, clientSessionId: s.tabId, fingerprint: s.fingerprint, info };
       })().catch((e) => {
         cached = undefined;
         throw e;
@@ -1563,7 +1540,7 @@ export {
   createSessionManager, memorySessionStorage, webSessionStorage,
   type SessionManager, type SessionManagerOptions, type SessionSnapshot, type SessionStatus, type SessionStorage, type SignOutReason, type StoredSession,
 } from "./session";
-export { createDeviceCollector, deviceInfo, fingerprintOf, randomId, type DeviceCollector, type DeviceOptions, type DeviceSignals, type DeviceStore } from "./device";
+export { createDeviceCollector, deviceInfo, fingerprintOf, randomId, type DeviceCollector, type DeviceOptions, type DeviceSignals, type DeviceStore, type SignalSource } from "./device";
 export { clearOnSignOut, mgplFetcher, mgplKey, mgplMutation, mgplQuery, runOperation, type RequestClient } from "./query";
 export { createTransport, MgplGraphQLError, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
 export { OPERATIONS, FRAGMENTS, withFragments, type Operation, type OperationName } from "./operations";
