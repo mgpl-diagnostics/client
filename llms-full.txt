@@ -992,7 +992,7 @@ Key facts for agents:
     }
   },
   "devDependencies": {
-    "@mgpl-diagnostics/security-kit": "github:mgpl-diagnostics/security-kit#aee153f38cc31b9ebe07abd9f634333678eb4edf",
+    "@mgpl-diagnostics/security-kit": "git+https://github.com/mgpl-diagnostics/security-kit.git#aee153f38cc31b9ebe07abd9f634333678eb4edf",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",
     "tsup": "^8.5.0",
