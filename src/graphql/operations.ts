@@ -27,6 +27,12 @@ export const FRAGMENTS: Record<string, string> = {
   SampleFields: `fragment SampleFields on Sample { id barcode sampleType status collectedAt receivedAt rejectReason }`,
   ReportFields: `fragment ReportFields on Report {
     id testCode testName status version verifiedAt releasedAt updatedAt results { parameter value unit flag range }
+    provenance { ...ReportProvenanceFields }
+  }`,
+  ReportedByFields: `fragment ReportedByFields on ExternalReportedBy { id name qualification registration title role }`,
+  ReportProvenanceFields: `fragment ReportProvenanceFields on ReportProvenance {
+    externalReportId lab performedBy performedAt accreditationText reportedBy { ...ReportedByFields }
+    sourceTestName sourceSampleId sourceReportedAt importedResults { parameter value unit flag range } appliedAt
   }`,
   BookingFields: `fragment BookingFields on Booking {
     id bookingNo status notes createdAt
@@ -115,6 +121,19 @@ export const FRAGMENTS: Record<string, string> = {
   CsvFileFields: `fragment CsvFileFields on CsvFile { fileName mimeType content }`,
 
   DocumentFields: `fragment DocumentFields on Document { format fileName mimeType byteLength base64 html }`,
+  ExternalReportFields: `fragment ExternalReportFields on ExternalReport {
+    id branchId booking { id bookingNo } lab labName processedAt status fileName byteLength sourceSha256
+    warnings patientMismatches patient { name title ageText ageYears sex patientId } sampleIds reportedAt
+    tests {
+      index name department sampleType sampleId reported method accredited notes signedBy suggestedTestCode
+      parameters { name value unit range method flag group }
+      provenance { performedBy performedAt accreditationText reportedBy { ...ReportedByFields } text }
+    }
+    signatories { id name qualification registration title role medical source sha pages }
+    reports { id testCode testName status }
+    uploadedBy { id name } uploadedAt appliedAt rejectReason
+  }`,
+  ExternalSignatoryFields: `fragment ExternalSignatoryFields on ExternalSignatory { id lab name qualification registration title role signatureCount createdAt }`,
   JobFields: `fragment JobFields on Job { id kind state attempts error createdAt finishedAt document { ...DocumentFields } }`,
 };
 
@@ -448,6 +467,30 @@ export const OPERATIONS = {
     "...DocumentFields",
   ),
   job: q("job", "$id: ID!", "...JobFields"),
+
+  // ---------------------------------------------------------------- partner-lab imports
+  externalReport: q("externalReport", "$id: ID!", "...ExternalReportFields"),
+  externalReports: q(
+    "externalReports",
+    "$branchId: ID, $bookingId: ID, $status: ExternalReportStatus, $first: Int, $after: String",
+    "nodes { ...ExternalReportFields } pageInfo { hasNextPage endCursor }",
+  ),
+  externalSignatories: q("externalSignatories", "$lab: ExternalLab", "...ExternalSignatoryFields"),
+  /** Signature images are large: fetched on their own, only with their report. */
+  externalReportSignatures: q("externalReport", "$id: ID!", "id signatories { id sha image { mimeType width height base64 } }"),
+  importExternalReport: m(
+    "importExternalReport",
+    "$pdfBase64: String!, $fileName: String, $bookingId: ID, $branchId: ID",
+    "...ExternalReportFields",
+  ),
+  matchExternalReport: m("matchExternalReport", "$id: ID!, $bookingId: ID!", "...ExternalReportFields"),
+  applyExternalReport: m(
+    "applyExternalReport",
+    "$id: ID!, $mappings: [ExternalTestMappingInput!]!, $confirmPatientMismatch: Boolean",
+    "...ReportFields",
+  ),
+  rejectExternalReport: m("rejectExternalReport", "$id: ID!, $reason: String!", "...ExternalReportFields"),
+  nameExternalSignature: m("nameExternalSignature", "$input: ExternalSignatoryInput!", "...ExternalSignatoryFields"),
   startDocumentJob: m("startDocumentJob", "$input: DocumentJobInput!", "...JobFields"),
 } satisfies Record<string, Operation>;
 

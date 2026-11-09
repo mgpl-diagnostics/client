@@ -473,6 +473,10 @@ Every failure throws `MgplGraphQLError` with a stable `code`:
 | `PERIOD_LOCKED` | The date is on or before a lock date. |
 | `CREDIT_LIMIT_EXCEEDED` | A customer invoice would exceed the credit limit. |
 | `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `INVITE_PENDING`, `ORG_REQUIRED`, `RATE_LIMITED` (with `extensions.retryAfterMs`), `WEAK_PASSWORD`, `INVALID_TOKEN` | auth-kit's codes, unchanged. |
+| `UNSUPPORTED_REPORT` | `imports.upload`: the PDF is not from a supported partner lab. |
+| `FILE_TOO_LARGE` | `imports.upload`: the PDF is over the server's limit (15 MB by default; `extensions.maxBytes`). |
+| `BOOKING_PATIENT_MISMATCH` | `imports.apply`: the booking's patient differs (`extensions.mismatches`); confirm with `confirmPatientMismatch: true`. |
+| `REPORT_ALREADY_APPLIED` | `imports.apply` / `match` / `reject` on an import that was already applied. |
 | `NETWORK_ERROR` / `INTERNAL_SERVER_ERROR` | No response, or a server fault (details are masked). |
 
 `error.errors` holds every GraphQL error, `error.status` the HTTP status, `error.data` any partial data.
@@ -602,6 +606,30 @@ docs (`docs/04-api-reference.md`).
 | `verify` | mutation `verifyReport` |
 | `release` | mutation `releaseReport` |
 | `amend` | mutation `amendReport` |
+
+### imports
+
+Partner-lab report imports. Applied tests become our reports with status `entered` and a `provenance`;
+staff verify and release them as usual.
+
+| Method | GraphQL |
+|---|---|
+| `upload` | mutation `importExternalReport` (base64 or bytes; `fileToBase64(file)` for an `<input type="file">`) |
+| `get` | query `externalReport` |
+| `list` | query `externalReports` (`first` / `after` cursor pages) |
+| `signatures` | query `externalReport { signatories { image } }` (only that PDF's own signatures; `signatureDataUri(img)` for an `<img>`) |
+| `match` | mutation `matchExternalReport` |
+| `apply` | mutation `applyExternalReport` |
+| `reject` | mutation `rejectExternalReport` |
+| `signatories` | query `externalSignatories` |
+| `nameSignature` | mutation `nameExternalSignature` |
+
+```ts
+const ext = await api.imports.upload(await fileToBase64(file), { fileName: file.name, bookingId });
+if (ext.patientMismatches.length) showWarnings(ext.patientMismatches); // staff must confirm
+const mappings = ext.tests.filter((t) => t.suggestedTestCode).map((t) => ({ testIndex: t.index, testCode: t.suggestedTestCode! }));
+const reports = await api.imports.apply(ext.id, mappings, { confirmPatientMismatch: confirmed });
+```
 
 ### invoices
 
@@ -942,7 +970,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1242,6 +1270,31 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       amend: (id: T.ID) => run<T.Report>(O.amendReport, { id }),
     },
 
+    /**
+     * Partner-lab report imports: upload a partner PDF, match it to a booking, apply its tests to our
+     * reports (as entered results with provenance; staff verify as usual). Needs report:import.
+     */
+    imports: {
+      /** `pdf` as base64 (see `fileToBase64`) or bytes. The same PDF again returns the same import. */
+      upload: (pdf: string | Uint8Array, o: { fileName?: string; bookingId?: T.ID; branchId?: T.ID } = {}) =>
+        run<T.ExternalReport>(O.importExternalReport, { pdfBase64: typeof pdf === "string" ? pdf : bytesToBase64(pdf), ...o }),
+      get: (id: T.ID) => run<T.ExternalReport | null>(O.externalReport, { id }),
+      list: (filter: { branchId?: T.ID; bookingId?: T.ID; status?: T.ExternalReportStatus; first?: number; after?: string } = {}) =>
+        run<T.ExternalReportConnection>(O.externalReports, filter),
+      /** The signature images of one import (only ever from its own PDF). */
+      signatures: async (id: T.ID) =>
+        (await run<{ id: T.ID; signatories: { id: string; sha: string; image: T.SignatureImage | null }[] } | null>(O.externalReportSignatures, { id }))?.signatories ?? [],
+      match: (id: T.ID, bookingId: T.ID) => run<T.ExternalReport>(O.matchExternalReport, { id, bookingId }),
+      /** Throws BOOKING_PATIENT_MISMATCH when the patients differ, unless `confirmPatientMismatch`. */
+      apply: (id: T.ID, mappings: T.ExternalTestMappingInput[], o: { confirmPatientMismatch?: boolean } = {}) =>
+        run<T.Report[]>(O.applyExternalReport, { id, mappings, ...o }),
+      reject: (id: T.ID, reason: string) => run<T.ExternalReport>(O.rejectExternalReport, { id, reason }),
+      /** The partner signatory registry (signatory:read). */
+      signatories: (lab?: T.ExternalLab) => run<T.ExternalSignatory[]>(O.externalSignatories, { lab }),
+      /** Names a partner signature (signatory:manage); unapplied imports carrying it are read again. */
+      nameSignature: (input: T.ExternalSignatoryInput) => run<T.ExternalSignatory>(O.nameExternalSignature, { input }),
+    },
+
     invoices: {
       list: (filter: { branchId?: T.ID; patientId?: T.ID; customerId?: T.ID; status?: T.InvoiceStatus } & Page = {}) =>
         run<T.Invoice[]>(O.invoices, filter),
@@ -1410,6 +1463,21 @@ export function documentBlob(doc: Pick<T.RenderedDocument, "mimeType" | "base64"
   return new Blob([doc.html ?? ""], { type: doc.mimeType });
 }
 
+/** Bytes as base64 (browsers, workers and Node.js; no Buffer). */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** A File or Blob (e.g. from <input type="file">) as base64, for `imports.upload`. */
+export async function fileToBase64(file: Blob): Promise<string> {
+  return bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+}
+
+/** A signature image as a data: URI for an <img>. */
+export const signatureDataUri = (img: T.SignatureImage) => `data:${img.mimeType};base64,${img.base64}`;
+
 /** A CSV export as a Blob (UTF-8). */
 export function csvBlob(file: T.CsvFile): Blob {
   return new Blob([file.content], { type: file.mimeType });
@@ -1535,7 +1603,7 @@ export function createDeviceCollector(o: DeviceOptions = {}): DeviceCollector {
 ```ts
 // "@mgpl-diagnostics/client/graphql": the GraphQL SDK with every type flat.
 // The main entry re-exports the client and helpers too, with these types under the `Gql` namespace.
-export { createMgplGraphQLClient, documentBlob, csvBlob, type MgplGraphQLClient, type MgplGraphQLClientOptions } from "./client";
+export { createMgplGraphQLClient, documentBlob, csvBlob, bytesToBase64, fileToBase64, signatureDataUri, type MgplGraphQLClient, type MgplGraphQLClientOptions } from "./client";
 export {
   createSessionManager, memorySessionStorage, webSessionStorage,
   type SessionManager, type SessionManagerOptions, type SessionSnapshot, type SessionStatus, type SessionStorage, type SignOutReason, type StoredSession,
@@ -1582,6 +1650,12 @@ export const FRAGMENTS: Record<string, string> = {
   SampleFields: `fragment SampleFields on Sample { id barcode sampleType status collectedAt receivedAt rejectReason }`,
   ReportFields: `fragment ReportFields on Report {
     id testCode testName status version verifiedAt releasedAt updatedAt results { parameter value unit flag range }
+    provenance { ...ReportProvenanceFields }
+  }`,
+  ReportedByFields: `fragment ReportedByFields on ExternalReportedBy { id name qualification registration title role }`,
+  ReportProvenanceFields: `fragment ReportProvenanceFields on ReportProvenance {
+    externalReportId lab performedBy performedAt accreditationText reportedBy { ...ReportedByFields }
+    sourceTestName sourceSampleId sourceReportedAt importedResults { parameter value unit flag range } appliedAt
   }`,
   BookingFields: `fragment BookingFields on Booking {
     id bookingNo status notes createdAt
@@ -1670,6 +1744,19 @@ export const FRAGMENTS: Record<string, string> = {
   CsvFileFields: `fragment CsvFileFields on CsvFile { fileName mimeType content }`,
 
   DocumentFields: `fragment DocumentFields on Document { format fileName mimeType byteLength base64 html }`,
+  ExternalReportFields: `fragment ExternalReportFields on ExternalReport {
+    id branchId booking { id bookingNo } lab labName processedAt status fileName byteLength sourceSha256
+    warnings patientMismatches patient { name title ageText ageYears sex patientId } sampleIds reportedAt
+    tests {
+      index name department sampleType sampleId reported method accredited notes signedBy suggestedTestCode
+      parameters { name value unit range method flag group }
+      provenance { performedBy performedAt accreditationText reportedBy { ...ReportedByFields } text }
+    }
+    signatories { id name qualification registration title role medical source sha pages }
+    reports { id testCode testName status }
+    uploadedBy { id name } uploadedAt appliedAt rejectReason
+  }`,
+  ExternalSignatoryFields: `fragment ExternalSignatoryFields on ExternalSignatory { id lab name qualification registration title role signatureCount createdAt }`,
   JobFields: `fragment JobFields on Job { id kind state attempts error createdAt finishedAt document { ...DocumentFields } }`,
 };
 
@@ -2003,6 +2090,30 @@ export const OPERATIONS = {
     "...DocumentFields",
   ),
   job: q("job", "$id: ID!", "...JobFields"),
+
+  // ---------------------------------------------------------------- partner-lab imports
+  externalReport: q("externalReport", "$id: ID!", "...ExternalReportFields"),
+  externalReports: q(
+    "externalReports",
+    "$branchId: ID, $bookingId: ID, $status: ExternalReportStatus, $first: Int, $after: String",
+    "nodes { ...ExternalReportFields } pageInfo { hasNextPage endCursor }",
+  ),
+  externalSignatories: q("externalSignatories", "$lab: ExternalLab", "...ExternalSignatoryFields"),
+  /** Signature images are large: fetched on their own, only with their report. */
+  externalReportSignatures: q("externalReport", "$id: ID!", "id signatories { id sha image { mimeType width height base64 } }"),
+  importExternalReport: m(
+    "importExternalReport",
+    "$pdfBase64: String!, $fileName: String, $bookingId: ID, $branchId: ID",
+    "...ExternalReportFields",
+  ),
+  matchExternalReport: m("matchExternalReport", "$id: ID!, $bookingId: ID!", "...ExternalReportFields"),
+  applyExternalReport: m(
+    "applyExternalReport",
+    "$id: ID!, $mappings: [ExternalTestMappingInput!]!, $confirmPatientMismatch: Boolean",
+    "...ReportFields",
+  ),
+  rejectExternalReport: m("rejectExternalReport", "$id: ID!, $reason: String!", "...ExternalReportFields"),
+  nameExternalSignature: m("nameExternalSignature", "$input: ExternalSignatoryInput!", "...ExternalSignatoryFields"),
   startDocumentJob: m("startDocumentJob", "$input: DocumentJobInput!", "...JobFields"),
 } satisfies Record<string, Operation>;
 
@@ -2533,7 +2644,7 @@ export interface Patient { id: ID; uhid: string; title: string | null; name: str
 export interface Doctor { id: ID; name: string; qualification: string | null; phone: string | null; clinic: string | null; active: boolean }
 export interface Sample { id: ID; barcode: string; sampleType: string; status: SampleStatus; collectedAt: DateTime | null; receivedAt: DateTime | null; rejectReason: string | null }
 export interface ResultValue { parameter: string; value: string; unit: string | null; flag: ResultFlag | null; range: string | null }
-export interface Report { id: ID; testCode: string; testName: string; status: ReportStatus; version: number; verifiedAt: DateTime | null; releasedAt: DateTime | null; updatedAt: DateTime; results: ResultValue[] }
+export interface Report { id: ID; testCode: string; testName: string; status: ReportStatus; version: number; verifiedAt: DateTime | null; releasedAt: DateTime | null; updatedAt: DateTime; results: ResultValue[]; provenance: ReportProvenance | null }
 export interface BookingTest { testCode: string; name: string; pricePaise: number; sampleType: string | null }
 export interface Booking {
   id: ID; bookingNo: string; status: BookingStatus; notes: string | null; createdAt: DateTime;
@@ -2622,6 +2733,49 @@ export interface ReportTemplateInfo { id: string; name: string; category: string
 export interface ReportTemplateCatalog { templates: ReportTemplateInfo[]; profiles: { id: string; name: string; tests: string[] }[] }
 export interface PriceListEntry { code: string; name: string; category: string; rate: number; taxPercent: number | null; hsn: string | null }
 
+// ------------------------------------------------------------------ partner-lab imports
+
+export type ExternalLab = "hypatho" | "clinova";
+export type ExternalReportStatus = "extracted" | "matched" | "applied" | "rejected";
+export type ExternalSignatoryRole = "pathologist" | "biochemist" | "microbiologist" | "consultant" | "manager" | "unknown";
+export interface ExternalReportedBy { id: string; name: string | null; qualification: string | null; registration: string | null; title: string | null; role: ExternalSignatoryRole }
+/** Where one of our reports came from, when its results were imported from a partner lab's PDF. */
+export interface ReportProvenance {
+  externalReportId: ID; lab: ExternalLab; performedBy: string; performedAt: string | null;
+  /** Only for tests the partner marked accredited: the partner's accreditation, never ours. */
+  accreditationText: string | null;
+  /** Medical signatories only. */
+  reportedBy: ExternalReportedBy[];
+  sourceTestName: string; sourceSampleId: string | null; sourceReportedAt: string | null;
+  importedResults: ResultValue[]; appliedAt: DateTime;
+}
+export interface ExternalParameter { name: string; value: string; unit: string | null; range: string | null; method: string | null; flag: ResultFlag | null; group: string | null }
+export interface ExternalTest {
+  index: number; name: string; department: string | null; sampleType: string | null; sampleId: string | null; reported: string | null; method: string | null;
+  accredited: boolean; notes: string | null; signedBy: string[]; suggestedTestCode: string | null; parameters: ExternalParameter[];
+  provenance: { performedBy: string; performedAt: string | null; accreditationText: string | null; reportedBy: ExternalReportedBy[]; text: string };
+}
+export interface ExternalSignatoryOnReport {
+  id: string; name: string | null; qualification: string | null; registration: string | null; title: string | null;
+  role: ExternalSignatoryRole; medical: boolean; source: "text" | "registry" | "unknown"; sha: string; pages: number[];
+}
+export interface SignatureImage { mimeType: string; width: number; height: number; base64: string }
+export interface ExternalReport {
+  id: ID; branchId: ID; booking: { id: ID; bookingNo: string } | null; lab: ExternalLab; labName: string; processedAt: string | null;
+  status: ExternalReportStatus; fileName: string | null; byteLength: number; sourceSha256: string;
+  warnings: string[];
+  /** Differences from the booking's patient; apply needs `confirmPatientMismatch` when there are any. */
+  patientMismatches: string[];
+  patient: { name: string | null; title: string | null; ageText: string | null; ageYears: number | null; sex: Sex | null; patientId: string | null };
+  sampleIds: string[]; reportedAt: string | null; tests: ExternalTest[]; signatories: ExternalSignatoryOnReport[];
+  reports: Pick<Report, "id" | "testCode" | "testName" | "status">[];
+  uploadedBy: { id: ID; name: string } | null; uploadedAt: DateTime; appliedAt: DateTime | null; rejectReason: string | null;
+}
+export interface PageInfo { hasNextPage: boolean; endCursor: string | null }
+export interface ExternalReportConnection { nodes: ExternalReport[]; pageInfo: PageInfo }
+/** The organisation's partner signatory registry (data entered by staff). */
+export interface ExternalSignatory { id: ID; lab: ExternalLab; name: string; qualification: string | null; registration: string | null; title: string | null; role: ExternalSignatoryRole | null; signatureCount: number; createdAt: DateTime }
+
 // ------------------------------------------------------------------ inputs
 
 export interface RoleAssignmentInput { role: string; branchId?: ID | null }
@@ -2657,6 +2811,8 @@ export type DocumentJobKind = "invoice" | "booking_reports";
 /** Background work (the API's worker). Poll with documents.job(id) or documents.waitForJob(id). */
 export interface Job { id: ID; kind: DocumentJobKind; state: JobState; attempts: number; error: string | null; createdAt: DateTime; finishedAt: DateTime | null; document: RenderedDocument | null }
 export interface DocumentJobInput { kind: DocumentJobKind; invoiceId?: ID; bookingId?: ID; reportIds?: ID[]; format?: DocumentFormat; variant?: ReportVariant; design?: ReportDesign }
+export interface ExternalTestMappingInput { testIndex: number; testCode: string; include?: boolean }
+export interface ExternalSignatoryInput { sha: string; lab: ExternalLab; name: string; qualification?: string; registration?: string; title?: string; role?: ExternalSignatoryRole }
 export interface RenderOptions { format?: DocumentFormat; variant?: ReportVariant; design?: ReportDesign; fileName?: string }
 
 // ------------------------------------------------------------------ mutation results
@@ -2705,6 +2861,9 @@ export {
   createMgplGraphQLClient,
   documentBlob,
   csvBlob,
+  bytesToBase64,
+  fileToBase64,
+  signatureDataUri,
   createTransport,
   MgplGraphQLError,
   OPERATIONS,
@@ -3040,9 +3199,32 @@ export type Results = Record<string, ResultValue | string[] | undefined>;
 export type TemplateId = string;
 export type ProfileId = string;
 
+/** A partner lab's medical signatory, printed with the results of its own document. */
+export interface ReportTestSignatory {
+  name: string;
+  qualification?: string;
+  registration?: string;
+  title?: string;
+  /** data: URI; only ever the signature from these results' own source document */
+  signatureSrc?: string;
+}
+
+/** Set when a test was performed by another lab: printed under the test ("Performed at … · Reported by …"). */
+export interface ReportTestProvenance {
+  performedBy: string;
+  performedAt?: string;
+  /** Only for accredited tests, worded as the partner's accreditation. Never a logo. */
+  accreditationText?: string;
+  reportedBy?: ReportTestSignatory[];
+  /** The source document (e.g. the partner PDF's sha256) */
+  sourceId?: string;
+  text?: string;
+}
+
 export interface TestInput {
   template: TemplateId;
   results: Results;
+  provenance?: ReportTestProvenance;
 }
 
 /** POST /report — send `patient` + `tests`, or `patient` + `profile`, or a demo `sample` id. */

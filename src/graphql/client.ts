@@ -168,6 +168,31 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       amend: (id: T.ID) => run<T.Report>(O.amendReport, { id }),
     },
 
+    /**
+     * Partner-lab report imports: upload a partner PDF, match it to a booking, apply its tests to our
+     * reports (as entered results with provenance; staff verify as usual). Needs report:import.
+     */
+    imports: {
+      /** `pdf` as base64 (see `fileToBase64`) or bytes. The same PDF again returns the same import. */
+      upload: (pdf: string | Uint8Array, o: { fileName?: string; bookingId?: T.ID; branchId?: T.ID } = {}) =>
+        run<T.ExternalReport>(O.importExternalReport, { pdfBase64: typeof pdf === "string" ? pdf : bytesToBase64(pdf), ...o }),
+      get: (id: T.ID) => run<T.ExternalReport | null>(O.externalReport, { id }),
+      list: (filter: { branchId?: T.ID; bookingId?: T.ID; status?: T.ExternalReportStatus; first?: number; after?: string } = {}) =>
+        run<T.ExternalReportConnection>(O.externalReports, filter),
+      /** The signature images of one import (only ever from its own PDF). */
+      signatures: async (id: T.ID) =>
+        (await run<{ id: T.ID; signatories: { id: string; sha: string; image: T.SignatureImage | null }[] } | null>(O.externalReportSignatures, { id }))?.signatories ?? [],
+      match: (id: T.ID, bookingId: T.ID) => run<T.ExternalReport>(O.matchExternalReport, { id, bookingId }),
+      /** Throws BOOKING_PATIENT_MISMATCH when the patients differ, unless `confirmPatientMismatch`. */
+      apply: (id: T.ID, mappings: T.ExternalTestMappingInput[], o: { confirmPatientMismatch?: boolean } = {}) =>
+        run<T.Report[]>(O.applyExternalReport, { id, mappings, ...o }),
+      reject: (id: T.ID, reason: string) => run<T.ExternalReport>(O.rejectExternalReport, { id, reason }),
+      /** The partner signatory registry (signatory:read). */
+      signatories: (lab?: T.ExternalLab) => run<T.ExternalSignatory[]>(O.externalSignatories, { lab }),
+      /** Names a partner signature (signatory:manage); unapplied imports carrying it are read again. */
+      nameSignature: (input: T.ExternalSignatoryInput) => run<T.ExternalSignatory>(O.nameExternalSignature, { input }),
+    },
+
     invoices: {
       list: (filter: { branchId?: T.ID; patientId?: T.ID; customerId?: T.ID; status?: T.InvoiceStatus } & Page = {}) =>
         run<T.Invoice[]>(O.invoices, filter),
@@ -335,6 +360,21 @@ export function documentBlob(doc: Pick<T.RenderedDocument, "mimeType" | "base64"
   }
   return new Blob([doc.html ?? ""], { type: doc.mimeType });
 }
+
+/** Bytes as base64 (browsers, workers and Node.js; no Buffer). */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** A File or Blob (e.g. from <input type="file">) as base64, for `imports.upload`. */
+export async function fileToBase64(file: Blob): Promise<string> {
+  return bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+}
+
+/** A signature image as a data: URI for an <img>. */
+export const signatureDataUri = (img: T.SignatureImage) => `data:${img.mimeType};base64,${img.base64}`;
 
 /** A CSV export as a Blob (UTF-8). */
 export function csvBlob(file: T.CsvFile): Blob {

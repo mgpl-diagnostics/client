@@ -60,7 +60,7 @@ export interface Patient { id: ID; uhid: string; title: string | null; name: str
 export interface Doctor { id: ID; name: string; qualification: string | null; phone: string | null; clinic: string | null; active: boolean }
 export interface Sample { id: ID; barcode: string; sampleType: string; status: SampleStatus; collectedAt: DateTime | null; receivedAt: DateTime | null; rejectReason: string | null }
 export interface ResultValue { parameter: string; value: string; unit: string | null; flag: ResultFlag | null; range: string | null }
-export interface Report { id: ID; testCode: string; testName: string; status: ReportStatus; version: number; verifiedAt: DateTime | null; releasedAt: DateTime | null; updatedAt: DateTime; results: ResultValue[] }
+export interface Report { id: ID; testCode: string; testName: string; status: ReportStatus; version: number; verifiedAt: DateTime | null; releasedAt: DateTime | null; updatedAt: DateTime; results: ResultValue[]; provenance: ReportProvenance | null }
 export interface BookingTest { testCode: string; name: string; pricePaise: number; sampleType: string | null }
 export interface Booking {
   id: ID; bookingNo: string; status: BookingStatus; notes: string | null; createdAt: DateTime;
@@ -149,6 +149,49 @@ export interface ReportTemplateInfo { id: string; name: string; category: string
 export interface ReportTemplateCatalog { templates: ReportTemplateInfo[]; profiles: { id: string; name: string; tests: string[] }[] }
 export interface PriceListEntry { code: string; name: string; category: string; rate: number; taxPercent: number | null; hsn: string | null }
 
+// ------------------------------------------------------------------ partner-lab imports
+
+export type ExternalLab = "hypatho" | "clinova";
+export type ExternalReportStatus = "extracted" | "matched" | "applied" | "rejected";
+export type ExternalSignatoryRole = "pathologist" | "biochemist" | "microbiologist" | "consultant" | "manager" | "unknown";
+export interface ExternalReportedBy { id: string; name: string | null; qualification: string | null; registration: string | null; title: string | null; role: ExternalSignatoryRole }
+/** Where one of our reports came from, when its results were imported from a partner lab's PDF. */
+export interface ReportProvenance {
+  externalReportId: ID; lab: ExternalLab; performedBy: string; performedAt: string | null;
+  /** Only for tests the partner marked accredited: the partner's accreditation, never ours. */
+  accreditationText: string | null;
+  /** Medical signatories only. */
+  reportedBy: ExternalReportedBy[];
+  sourceTestName: string; sourceSampleId: string | null; sourceReportedAt: string | null;
+  importedResults: ResultValue[]; appliedAt: DateTime;
+}
+export interface ExternalParameter { name: string; value: string; unit: string | null; range: string | null; method: string | null; flag: ResultFlag | null; group: string | null }
+export interface ExternalTest {
+  index: number; name: string; department: string | null; sampleType: string | null; sampleId: string | null; reported: string | null; method: string | null;
+  accredited: boolean; notes: string | null; signedBy: string[]; suggestedTestCode: string | null; parameters: ExternalParameter[];
+  provenance: { performedBy: string; performedAt: string | null; accreditationText: string | null; reportedBy: ExternalReportedBy[]; text: string };
+}
+export interface ExternalSignatoryOnReport {
+  id: string; name: string | null; qualification: string | null; registration: string | null; title: string | null;
+  role: ExternalSignatoryRole; medical: boolean; source: "text" | "registry" | "unknown"; sha: string; pages: number[];
+}
+export interface SignatureImage { mimeType: string; width: number; height: number; base64: string }
+export interface ExternalReport {
+  id: ID; branchId: ID; booking: { id: ID; bookingNo: string } | null; lab: ExternalLab; labName: string; processedAt: string | null;
+  status: ExternalReportStatus; fileName: string | null; byteLength: number; sourceSha256: string;
+  warnings: string[];
+  /** Differences from the booking's patient; apply needs `confirmPatientMismatch` when there are any. */
+  patientMismatches: string[];
+  patient: { name: string | null; title: string | null; ageText: string | null; ageYears: number | null; sex: Sex | null; patientId: string | null };
+  sampleIds: string[]; reportedAt: string | null; tests: ExternalTest[]; signatories: ExternalSignatoryOnReport[];
+  reports: Pick<Report, "id" | "testCode" | "testName" | "status">[];
+  uploadedBy: { id: ID; name: string } | null; uploadedAt: DateTime; appliedAt: DateTime | null; rejectReason: string | null;
+}
+export interface PageInfo { hasNextPage: boolean; endCursor: string | null }
+export interface ExternalReportConnection { nodes: ExternalReport[]; pageInfo: PageInfo }
+/** The organisation's partner signatory registry (data entered by staff). */
+export interface ExternalSignatory { id: ID; lab: ExternalLab; name: string; qualification: string | null; registration: string | null; title: string | null; role: ExternalSignatoryRole | null; signatureCount: number; createdAt: DateTime }
+
 // ------------------------------------------------------------------ inputs
 
 export interface RoleAssignmentInput { role: string; branchId?: ID | null }
@@ -184,6 +227,8 @@ export type DocumentJobKind = "invoice" | "booking_reports";
 /** Background work (the API's worker). Poll with documents.job(id) or documents.waitForJob(id). */
 export interface Job { id: ID; kind: DocumentJobKind; state: JobState; attempts: number; error: string | null; createdAt: DateTime; finishedAt: DateTime | null; document: RenderedDocument | null }
 export interface DocumentJobInput { kind: DocumentJobKind; invoiceId?: ID; bookingId?: ID; reportIds?: ID[]; format?: DocumentFormat; variant?: ReportVariant; design?: ReportDesign }
+export interface ExternalTestMappingInput { testIndex: number; testCode: string; include?: boolean }
+export interface ExternalSignatoryInput { sha: string; lab: ExternalLab; name: string; qualification?: string; registration?: string; title?: string; role?: ExternalSignatoryRole }
 export interface RenderOptions { format?: DocumentFormat; variant?: ReportVariant; design?: ReportDesign; fileName?: string }
 
 // ------------------------------------------------------------------ mutation results

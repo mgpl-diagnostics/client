@@ -40,9 +40,32 @@ export type Results = Record<string, ResultValue | string[] | undefined>;
 export type TemplateId = string;
 export type ProfileId = string;
 
+/** A partner lab's medical signatory, printed with the results of its own document. */
+export interface ReportTestSignatory {
+  name: string;
+  qualification?: string;
+  registration?: string;
+  title?: string;
+  /** data: URI; only ever the signature from these results' own source document */
+  signatureSrc?: string;
+}
+
+/** Set when a test was performed by another lab: printed under the test ("Performed at … · Reported by …"). */
+export interface ReportTestProvenance {
+  performedBy: string;
+  performedAt?: string;
+  /** Only for accredited tests, worded as the partner's accreditation. Never a logo. */
+  accreditationText?: string;
+  reportedBy?: ReportTestSignatory[];
+  /** The source document (e.g. the partner PDF's sha256) */
+  sourceId?: string;
+  text?: string;
+}
+
 export interface TestInput {
   template: TemplateId;
   results: Results;
+  provenance?: ReportTestProvenance;
 }
 
 /** POST /report — send `patient` + `tests`, or `patient` + `profile`, or a demo `sample` id. */

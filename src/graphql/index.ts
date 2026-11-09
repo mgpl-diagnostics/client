@@ -1,6 +1,6 @@
 // "@mgpl-diagnostics/client/graphql": the GraphQL SDK with every type flat.
 // The main entry re-exports the client and helpers too, with these types under the `Gql` namespace.
-export { createMgplGraphQLClient, documentBlob, csvBlob, type MgplGraphQLClient, type MgplGraphQLClientOptions } from "./client";
+export { createMgplGraphQLClient, documentBlob, csvBlob, bytesToBase64, fileToBase64, signatureDataUri, type MgplGraphQLClient, type MgplGraphQLClientOptions } from "./client";
 export {
   createSessionManager, memorySessionStorage, webSessionStorage,
   type SessionManager, type SessionManagerOptions, type SessionSnapshot, type SessionStatus, type SessionStorage, type SignOutReason, type StoredSession,
