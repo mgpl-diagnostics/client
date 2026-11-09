@@ -197,6 +197,8 @@ export const OPERATIONS = {
   requestPasswordReset: m("requestPasswordReset", "$email: String!, $orgCode: String"),
   resetPassword: m("resetPassword", "$token: String!, $newPassword: String!"),
   mySessions: q("mySessions", "", "...SessionFields"),
+  myOrganizations: q("myOrganizations", "", "code name current"),
+  switchOrganization: m("switchOrganization", "$orgCode: String!, $device: DeviceInput", "...LoginResultFields"),
 
   users: q("users", "", "...UserFields"),
   user: q("user", "$id: ID!", "...UserFields"),

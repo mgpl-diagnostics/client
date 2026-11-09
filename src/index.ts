@@ -24,6 +24,7 @@ export {
   signatureDataUri,
   createTransport,
   MgplGraphQLError,
+  organizationChoices,
   OPERATIONS,
   FRAGMENTS,
   withFragments,

@@ -64,7 +64,7 @@ Every failure throws `MgplGraphQLError` with a stable `code`:
 | `CONFLICT` | Duplicate or wrong state (e.g. releasing an unverified report). |
 | `PERIOD_LOCKED` | The date is on or before a lock date. |
 | `CREDIT_LIMIT_EXCEEDED` | A customer invoice would exceed the credit limit. |
-| `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `INVITE_PENDING`, `ORG_REQUIRED`, `RATE_LIMITED` (with `extensions.retryAfterMs`), `WEAK_PASSWORD`, `INVALID_TOKEN` | auth-kit's codes, unchanged. |
+| `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `INVITE_PENDING`, `ORG_REQUIRED` (with `extensions.organizations`; read it with `organizationChoices(error)`), `ORG_UNAVAILABLE`, `RATE_LIMITED` (with `extensions.retryAfterMs`), `WEAK_PASSWORD`, `INVALID_TOKEN` | auth-kit's codes, unchanged. |
 | `UNSUPPORTED_REPORT` | `imports.upload`: the PDF is not from a supported partner lab. |
 | `FILE_TOO_LARGE` | `imports.upload`: the PDF is over the server's limit (15 MB by default; `extensions.maxBytes`). |
 | `BOOKING_PATIENT_MISMATCH` | `imports.apply`: the booking's patient differs (`extensions.mismatches`); confirm with `confirmPatientMismatch: true`. |
@@ -108,6 +108,8 @@ docs (`docs/04-api-reference.md`).
 | `viewer` | query `viewer` |
 | `can` | query `viewer { can }` |
 | `sessions` | query `mySessions` |
+| `organizations` | query `myOrganizations` |
+| `switchOrganization` | mutation `switchOrganization` (adds device signals, keeps the new tokens) |
 | `logoutOtherSessions` | mutation `logoutOtherSessions` |
 | `revokeSession` | mutation `revokeSession` |
 | `changePassword` | mutation `changePassword` |

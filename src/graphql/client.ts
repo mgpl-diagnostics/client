@@ -80,6 +80,19 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       can: async (permission: string, branchId?: T.ID) =>
         (await run<{ can: boolean } | null>(O.can, { permission, branchId }))?.can ?? false,
       sessions: () => run<T.Session[]>(O.mySessions),
+      /** Every lab the signed-in person can work in (same email), `current` marking this session's. */
+      organizations: () => run<T.OrganizationChoice[]>(O.myOrganizations),
+      /**
+       * Moves this session to the person's account in another lab, without the password, and keeps the new
+       * tokens. Clear cached data afterwards: everything now belongs to the other lab. ORG_UNAVAILABLE when
+       * there is no such account.
+       */
+      async switchOrganization(orgCode: string): Promise<T.LoginResult> {
+        const device = await session.device();
+        const result = await run<T.LoginResult>(O.switchOrganization, { orgCode, device });
+        session.signIn(result);
+        return result;
+      },
       logoutOtherSessions: () => run<number>(O.logoutOtherSessions),
       revokeSession: (id: T.ID) => run<boolean>(O.revokeSession, { id }),
       changePassword: (currentPassword: string, newPassword: string) =>
