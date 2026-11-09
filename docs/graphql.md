@@ -65,6 +65,10 @@ Every failure throws `MgplGraphQLError` with a stable `code`:
 | `PERIOD_LOCKED` | The date is on or before a lock date. |
 | `CREDIT_LIMIT_EXCEEDED` | A customer invoice would exceed the credit limit. |
 | `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `INVITE_PENDING`, `ORG_REQUIRED`, `RATE_LIMITED` (with `extensions.retryAfterMs`), `WEAK_PASSWORD`, `INVALID_TOKEN` | auth-kit's codes, unchanged. |
+| `UNSUPPORTED_REPORT` | `imports.upload`: the PDF is not from a supported partner lab. |
+| `FILE_TOO_LARGE` | `imports.upload`: the PDF is over the server's limit (15 MB by default; `extensions.maxBytes`). |
+| `BOOKING_PATIENT_MISMATCH` | `imports.apply`: the booking's patient differs (`extensions.mismatches`); confirm with `confirmPatientMismatch: true`. |
+| `REPORT_ALREADY_APPLIED` | `imports.apply` / `match` / `reject` on an import that was already applied. |
 | `NETWORK_ERROR` / `INTERNAL_SERVER_ERROR` | No response, or a server fault (details are masked). |
 
 `error.errors` holds every GraphQL error, `error.status` the HTTP status, `error.data` any partial data.
@@ -194,6 +198,30 @@ docs (`docs/04-api-reference.md`).
 | `verify` | mutation `verifyReport` |
 | `release` | mutation `releaseReport` |
 | `amend` | mutation `amendReport` |
+
+### imports
+
+Partner-lab report imports. Applied tests become our reports with status `entered` and a `provenance`;
+staff verify and release them as usual.
+
+| Method | GraphQL |
+|---|---|
+| `upload` | mutation `importExternalReport` (base64 or bytes; `fileToBase64(file)` for an `<input type="file">`) |
+| `get` | query `externalReport` |
+| `list` | query `externalReports` (`first` / `after` cursor pages) |
+| `signatures` | query `externalReport { signatories { image } }` (only that PDF's own signatures; `signatureDataUri(img)` for an `<img>`) |
+| `match` | mutation `matchExternalReport` |
+| `apply` | mutation `applyExternalReport` |
+| `reject` | mutation `rejectExternalReport` |
+| `signatories` | query `externalSignatories` |
+| `nameSignature` | mutation `nameExternalSignature` |
+
+```ts
+const ext = await api.imports.upload(await fileToBase64(file), { fileName: file.name, bookingId });
+if (ext.patientMismatches.length) showWarnings(ext.patientMismatches); // staff must confirm
+const mappings = ext.tests.filter((t) => t.suggestedTestCode).map((t) => ({ testIndex: t.index, testCode: t.suggestedTestCode! }));
+const reports = await api.imports.apply(ext.id, mappings, { confirmPatientMismatch: confirmed });
+```
 
 ### invoices
 
