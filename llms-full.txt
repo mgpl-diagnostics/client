@@ -472,7 +472,7 @@ Every failure throws `MgplGraphQLError` with a stable `code`:
 | `CONFLICT` | Duplicate or wrong state (e.g. releasing an unverified report). |
 | `PERIOD_LOCKED` | The date is on or before a lock date. |
 | `CREDIT_LIMIT_EXCEEDED` | A customer invoice would exceed the credit limit. |
-| `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `INVITE_PENDING`, `ORG_REQUIRED`, `RATE_LIMITED` (with `extensions.retryAfterMs`), `WEAK_PASSWORD`, `INVALID_TOKEN` | auth-kit's codes, unchanged. |
+| `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `INVITE_PENDING`, `ORG_REQUIRED` (with `extensions.organizations`; read it with `organizationChoices(error)`), `ORG_UNAVAILABLE`, `RATE_LIMITED` (with `extensions.retryAfterMs`), `WEAK_PASSWORD`, `INVALID_TOKEN` | auth-kit's codes, unchanged. |
 | `UNSUPPORTED_REPORT` | `imports.upload`: the PDF is not from a supported partner lab. |
 | `FILE_TOO_LARGE` | `imports.upload`: the PDF is over the server's limit (15 MB by default; `extensions.maxBytes`). |
 | `BOOKING_PATIENT_MISMATCH` | `imports.apply`: the booking's patient differs (`extensions.mismatches`); confirm with `confirmPatientMismatch: true`. |
@@ -516,6 +516,8 @@ docs (`docs/04-api-reference.md`).
 | `viewer` | query `viewer` |
 | `can` | query `viewer { can }` |
 | `sessions` | query `mySessions` |
+| `organizations` | query `myOrganizations` |
+| `switchOrganization` | mutation `switchOrganization` (adds device signals, keeps the new tokens) |
 | `logoutOtherSessions` | mutation `logoutOtherSessions` |
 | `revokeSession` | mutation `revokeSession` |
 | `changePassword` | mutation `changePassword` |
@@ -970,7 +972,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1182,6 +1184,19 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       can: async (permission: string, branchId?: T.ID) =>
         (await run<{ can: boolean } | null>(O.can, { permission, branchId }))?.can ?? false,
       sessions: () => run<T.Session[]>(O.mySessions),
+      /** Every lab the signed-in person can work in (same email), `current` marking this session's. */
+      organizations: () => run<T.OrganizationChoice[]>(O.myOrganizations),
+      /**
+       * Moves this session to the person's account in another lab, without the password, and keeps the new
+       * tokens. Clear cached data afterwards: everything now belongs to the other lab. ORG_UNAVAILABLE when
+       * there is no such account.
+       */
+      async switchOrganization(orgCode: string): Promise<T.LoginResult> {
+        const device = await session.device();
+        const result = await run<T.LoginResult>(O.switchOrganization, { orgCode, device });
+        session.signIn(result);
+        return result;
+      },
       logoutOtherSessions: () => run<number>(O.logoutOtherSessions),
       revokeSession: (id: T.ID) => run<boolean>(O.revokeSession, { id }),
       changePassword: (currentPassword: string, newPassword: string) =>
@@ -1610,7 +1625,7 @@ export {
 } from "./session";
 export { createDeviceCollector, deviceInfo, fingerprintOf, randomId, type DeviceCollector, type DeviceOptions, type DeviceSignals, type DeviceStore, type SignalSource } from "./device";
 export { clearOnSignOut, mgplFetcher, mgplKey, mgplMutation, mgplQuery, runOperation, type RequestClient } from "./query";
-export { createTransport, MgplGraphQLError, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
+export { createTransport, MgplGraphQLError, organizationChoices, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
 export { OPERATIONS, FRAGMENTS, withFragments, type Operation, type OperationName } from "./operations";
 export type * from "./types";
 ```
@@ -1820,6 +1835,8 @@ export const OPERATIONS = {
   requestPasswordReset: m("requestPasswordReset", "$email: String!, $orgCode: String"),
   resetPassword: m("resetPassword", "$token: String!, $newPassword: String!"),
   mySessions: q("mySessions", "", "...SessionFields"),
+  myOrganizations: q("myOrganizations", "", "code name current"),
+  switchOrganization: m("switchOrganization", "$orgCode: String!, $device: DeviceInput", "...LoginResultFields"),
 
   users: q("users", "", "...UserFields"),
   user: q("user", "$id: ID!", "...UserFields"),
@@ -2513,6 +2530,17 @@ export class MgplGraphQLError extends Error {
 
 export type Variables = Record<string, unknown>;
 
+/**
+ * The labs to pick from after login failed with ORG_REQUIRED (`extensions.organizations`): log in again
+ * with the picked `orgCode`. Empty for any other error.
+ */
+export function organizationChoices(error: unknown): { code: string; name: string }[] {
+  if (!(error instanceof MgplGraphQLError) || error.code !== "ORG_REQUIRED") return [];
+  const list = error.errors[0]?.extensions?.organizations;
+  if (!Array.isArray(list)) return [];
+  return list.filter((o): o is { code: string; name: string } => !!o && typeof o.code === "string" && typeof o.name === "string").map(({ code, name }) => ({ code, name }));
+}
+
 export function createTransport(opts: GraphQLClientOptions = {}) {
   const url = opts.url ?? "/graphql";
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
@@ -2623,6 +2651,8 @@ export interface User { id: ID; name: string; email: string; phone: string | nul
 export interface Role { id: ID; key: string; name: string; permissions: string[]; system: boolean }
 export interface Session { id: ID; current: boolean; createdAt: DateTime; lastSeenAt: DateTime; expiresAt: DateTime; ip: string | null; userAgent: string | null; deviceId: string | null; deviceInfo: Record<string, string | number | boolean> | null }
 /** login and refreshSession. The access token goes in `Authorization: Bearer`; the refresh token buys the next pair. */
+/** A lab the signed-in person can work in (myOrganizations), or one to pick after ORG_REQUIRED (no `current` there). */
+export interface OrganizationChoice { code: string; name: string; current: boolean }
 export interface LoginResult { accessToken: string; accessExpiresAt: DateTime; refreshToken: string; refreshExpiresAt: DateTime; user: User }
 export interface Branch { id: ID; code: string; name: string; kind: BranchKind; phone: string | null; gstin: string | null; stateCode: string | null; address: Address | null; active: boolean }
 export interface Organization { id: ID; name: string; code: string; legalName: string | null; gstin: string | null; phone: string | null; email: string | null; address: Address | null; branches: Branch[] }
@@ -2866,6 +2896,7 @@ export {
   signatureDataUri,
   createTransport,
   MgplGraphQLError,
+  organizationChoices,
   OPERATIONS,
   FRAGMENTS,
   withFragments,

@@ -7,6 +7,6 @@ export {
 } from "./session";
 export { createDeviceCollector, deviceInfo, fingerprintOf, randomId, type DeviceCollector, type DeviceOptions, type DeviceSignals, type DeviceStore, type SignalSource } from "./device";
 export { clearOnSignOut, mgplFetcher, mgplKey, mgplMutation, mgplQuery, runOperation, type RequestClient } from "./query";
-export { createTransport, MgplGraphQLError, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
+export { createTransport, MgplGraphQLError, organizationChoices, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
 export { OPERATIONS, FRAGMENTS, withFragments, type Operation, type OperationName } from "./operations";
 export type * from "./types";

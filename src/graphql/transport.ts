@@ -49,6 +49,17 @@ export class MgplGraphQLError extends Error {
 
 export type Variables = Record<string, unknown>;
 
+/**
+ * The labs to pick from after login failed with ORG_REQUIRED (`extensions.organizations`): log in again
+ * with the picked `orgCode`. Empty for any other error.
+ */
+export function organizationChoices(error: unknown): { code: string; name: string }[] {
+  if (!(error instanceof MgplGraphQLError) || error.code !== "ORG_REQUIRED") return [];
+  const list = error.errors[0]?.extensions?.organizations;
+  if (!Array.isArray(list)) return [];
+  return list.filter((o): o is { code: string; name: string } => !!o && typeof o.code === "string" && typeof o.name === "string").map(({ code, name }) => ({ code, name }));
+}
+
 export function createTransport(opts: GraphQLClientOptions = {}) {
   const url = opts.url ?? "/graphql";
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
