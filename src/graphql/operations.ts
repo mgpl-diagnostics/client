@@ -195,7 +195,7 @@ export const OPERATIONS = {
     document: `query Can($permission: String!, $branchId: ID) { viewer { can(permission: $permission, branchId: $branchId) } }`,
   } as Operation,
   login: m("login", "$input: LoginInput!", "...LoginResultFields"),
-  refreshSession: m("refreshSession", "$refreshToken: String!, $device: DeviceInput", "...LoginResultFields"),
+  refreshSession: m("refreshSession", "$refreshToken: String, $device: DeviceInput", "...LoginResultFields"),
   logout: m("logout", "$refreshToken: String"),
   logoutOtherSessions: m("logoutOtherSessions", ""),
   revokeSession: m("revokeSession", "$id: ID!"),

@@ -22,6 +22,7 @@ export {
   bytesToBase64,
   fileToBase64,
   signatureDataUri,
+  AUTH_MODE_HEADER,
   createTransport,
   MgplGraphQLError,
   organizationChoices,

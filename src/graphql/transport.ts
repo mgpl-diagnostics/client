@@ -1,6 +1,12 @@
 // The GraphQL transport: one POST per operation to the backend's single endpoint (mgpl-diagnostics/api).
 import type { SessionManager } from "./session";
 
+/**
+ * The header that asks the api for a cookie session: tokens in httpOnly cookies, never in JavaScript.
+ * Cross-site forms cannot send a custom header, so the api reads the cookies only when it is there (CSRF).
+ */
+export const AUTH_MODE_HEADER = "x-mgpl-auth";
+
 export interface GraphQLClientOptions {
   /** The endpoint: "/graphql" (same origin) or "https://api.your-lab.in/graphql". */
   url?: string;
@@ -17,7 +23,7 @@ export interface GraphQLClientOptions {
   onToken?: (token: string | null) => void;
   /** Extra headers on every request. */
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
-  /** e.g. "include" when the API sits behind a cookie-forwarding proxy. */
+  /** Default "include" with a cookie-mode session (so the session cookies travel cross-origin too); unset otherwise. */
   credentials?: RequestCredentials;
 }
 
@@ -65,16 +71,19 @@ export function createTransport(opts: GraphQLClientOptions = {}) {
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const session = opts.session;
   let token: string | null = opts.token ?? null;
+  // cookie mode: the x-mgpl-auth header on every request (login included), never an Authorization header
+  const cookies = session?.cookies === true;
 
   async function once<T>(query: string, variables: Variables | undefined, init: { signal?: AbortSignal }): Promise<T> {
       const headers = new Headers(typeof opts.headers === "function" ? await opts.headers() : opts.headers);
       headers.set("content-type", "application/json");
       headers.set("accept", "application/graphql-response+json, application/json");
       const bearer = session ? await session.accessToken() : token;
-      if (bearer) headers.set("authorization", `Bearer ${bearer}`);
+      if (cookies) headers.set(AUTH_MODE_HEADER, "cookie");
+      else if (bearer) headers.set("authorization", `Bearer ${bearer}`);
       let res: Response;
       try {
-        res = await doFetch(url, { method: "POST", headers, credentials: opts.credentials, body: JSON.stringify({ query, variables }), signal: init.signal });
+        res = await doFetch(url, { method: "POST", headers, credentials: opts.credentials ?? (cookies ? "include" : undefined), body: JSON.stringify({ query, variables }), signal: init.signal });
       } catch (e) {
         throw new MgplGraphQLError((e as Error).message || "Network error", [], 0);
       }
@@ -111,7 +120,7 @@ export function createTransport(opts: GraphQLClientOptions = {}) {
       try {
         return await once<T>(query, variables, init);
       } catch (e) {
-        if (session && e instanceof MgplGraphQLError && e.code === "UNAUTHENTICATED" && session.current()?.refreshToken && (await session.refresh())) {
+        if (session && e instanceof MgplGraphQLError && e.code === "UNAUTHENTICATED" && (cookies ? !!session.current() : !!session.current()?.refreshToken) && (await session.refresh())) {
           return once<T>(query, variables, init);
         }
         throw e;
