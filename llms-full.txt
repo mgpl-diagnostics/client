@@ -505,6 +505,7 @@ docs (`docs/04-api-reference.md`).
 |---|---|
 | `health` | query `health` |
 | `ping` | mutation `ping` |
+| `systemUpdates({ dashboardVersion?, refresh? })` | query `systemUpdates` (owner and admin: newer api / dashboard releases, changelog, update steps) |
 
 ### auth
 
@@ -972,7 +973,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1156,6 +1157,12 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
 
     health: () => run<T.Health>(O.health),
     ping: () => run<string>(O.ping),
+    /**
+     * Owner and admin (`settings:manage`): the api and dashboard versions running, the newest releases, their
+     * changelogs and the update steps. Pass the dashboard's own version so it is compared too; `refresh`
+     * skips the server's cache (at most once a minute).
+     */
+    systemUpdates: (o: { dashboardVersion?: string; refresh?: boolean } = {}) => run<T.SystemUpdates>(O.systemUpdates, o),
 
     auth: {
       /** Signs in (with this device's signals) and keeps the tokens in the session manager. */
@@ -1819,6 +1826,12 @@ export const OPERATIONS = {
   // ---------------------------------------------------------------- system
   health: q("health", "", "ok service version database time"),
   ping: m("ping", ""),
+  systemUpdates: q(
+    "systemUpdates",
+    "$dashboardVersion: String, $refresh: Boolean",
+    `enabled checkedAt error updateAvailable docsUrl steps
+    components { component current latest updateAvailable image changes { version name notes url publishedAt } }`,
+  ),
 
   // ---------------------------------------------------------------- auth
   viewer: q("viewer", "", "user { ...UserFields } organization { ...OrganizationFields } permissions"),
@@ -2659,6 +2672,12 @@ export interface Organization { id: ID; name: string; code: string; legalName: s
 export interface Viewer { user: User; organization: Organization; permissions: string[] }
 export interface AuditEntry { id: ID; action: string; entity: string | null; entityId: ID | null; branchId: ID | null; user: { id: ID; name: string } | null; at: DateTime }
 export interface Health { ok: boolean; service: string; version: string; database: string; time: DateTime }
+/** A published release of the api or the dashboard (GitHub releases). `notes` is the changelog, in Markdown. */
+export interface Release { version: string; name: string | null; notes: string | null; url: string | null; publishedAt: DateTime | null }
+/** One part of the installation: what runs, the newest release, and the releases in between (newest first). */
+export interface ComponentUpdate { component: "api" | "dashboard"; current: string | null; latest: string | null; updateAvailable: boolean; image: string; changes: Release[] }
+/** systemUpdates (owner and admin, `settings:manage`): is a newer api or dashboard out, what changed, how to update. */
+export interface SystemUpdates { enabled: boolean; checkedAt: DateTime | null; error: string | null; updateAvailable: boolean; docsUrl: string; steps: string[]; components: ComponentUpdate[] }
 
 // ------------------------------------------------------------------ catalog
 

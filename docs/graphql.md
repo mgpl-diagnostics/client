@@ -97,6 +97,7 @@ docs (`docs/04-api-reference.md`).
 |---|---|
 | `health` | query `health` |
 | `ping` | mutation `ping` |
+| `systemUpdates({ dashboardVersion?, refresh? })` | query `systemUpdates` (owner and admin: newer api / dashboard releases, changelog, update steps) |
 
 ### auth
 

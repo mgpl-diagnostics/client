@@ -47,6 +47,12 @@ export interface Organization { id: ID; name: string; code: string; legalName: s
 export interface Viewer { user: User; organization: Organization; permissions: string[] }
 export interface AuditEntry { id: ID; action: string; entity: string | null; entityId: ID | null; branchId: ID | null; user: { id: ID; name: string } | null; at: DateTime }
 export interface Health { ok: boolean; service: string; version: string; database: string; time: DateTime }
+/** A published release of the api or the dashboard (GitHub releases). `notes` is the changelog, in Markdown. */
+export interface Release { version: string; name: string | null; notes: string | null; url: string | null; publishedAt: DateTime | null }
+/** One part of the installation: what runs, the newest release, and the releases in between (newest first). */
+export interface ComponentUpdate { component: "api" | "dashboard"; current: string | null; latest: string | null; updateAvailable: boolean; image: string; changes: Release[] }
+/** systemUpdates (owner and admin, `settings:manage`): is a newer api or dashboard out, what changed, how to update. */
+export interface SystemUpdates { enabled: boolean; checkedAt: DateTime | null; error: string | null; updateAvailable: boolean; docsUrl: string; steps: string[]; components: ComponentUpdate[] }
 
 // ------------------------------------------------------------------ catalog
 
