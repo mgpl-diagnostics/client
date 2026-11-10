@@ -52,6 +52,12 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
 
     health: () => run<T.Health>(O.health),
     ping: () => run<string>(O.ping),
+    /**
+     * Owner and admin (`settings:manage`): the api and dashboard versions running, the newest releases, their
+     * changelogs and the update steps. Pass the dashboard's own version so it is compared too; `refresh`
+     * skips the server's cache (at most once a minute).
+     */
+    systemUpdates: (o: { dashboardVersion?: string; refresh?: boolean } = {}) => run<T.SystemUpdates>(O.systemUpdates, o),
 
     auth: {
       /** Signs in (with this device's signals) and keeps the tokens in the session manager. */

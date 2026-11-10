@@ -181,6 +181,12 @@ export const OPERATIONS = {
   // ---------------------------------------------------------------- system
   health: q("health", "", "ok service version database time"),
   ping: m("ping", ""),
+  systemUpdates: q(
+    "systemUpdates",
+    "$dashboardVersion: String, $refresh: Boolean",
+    `enabled checkedAt error updateAvailable docsUrl steps
+    components { component current latest updateAvailable image changes { version name notes url publishedAt } }`,
+  ),
 
   // ---------------------------------------------------------------- auth
   viewer: q("viewer", "", "user { ...UserFields } organization { ...OrganizationFields } permissions"),
