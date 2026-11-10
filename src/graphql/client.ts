@@ -14,6 +14,8 @@ type Csv = { bom?: boolean };
 export interface MgplGraphQLClientOptions extends GraphQLClientOptions {
   /** Device signals for the default session manager (ignored when you pass `session`). false: none. */
   device?: DeviceCollector | false;
+  /** Cookie mode for the default session manager (ignored when you pass `session`): see SessionManagerOptions.cookies. */
+  cookies?: boolean;
 }
 
 export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
@@ -22,6 +24,7 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
     createSessionManager({
       url: opts.url,
       fetch: opts.fetch,
+      cookies: opts.cookies,
       storage: memorySessionStorage(opts.token ? { accessToken: opts.token } : null),
       device: opts.device === false ? false : (opts.device ?? createDeviceCollector()),
     });
@@ -69,11 +72,14 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       },
       /** Trades the refresh token for new tokens now (the client also does it by itself when needed). */
       refresh: () => session.refresh(),
-      /** Ends this session on the server (by its refresh token, so an expired access token is fine) and forgets the tokens. */
+      /**
+       * Ends this session on the server (by its refresh token, so an expired access token is fine) and forgets
+       * the tokens. Cookie mode: the api ends the session of the refresh cookie and clears both cookies.
+       */
       async logout(): Promise<void> {
         const cur = session.current();
         try {
-          if (cur) await transport.request(O.logout.document, { refreshToken: cur.refreshToken ?? undefined });
+          if (cur || session.cookies) await transport.request(O.logout.document, { refreshToken: cur?.refreshToken ?? undefined });
         } catch {
           /* already ended on the server */
         } finally {

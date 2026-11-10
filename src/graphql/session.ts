@@ -9,12 +9,18 @@
 import type { DeviceCollector, DeviceSignals } from "./device";
 import { createDeviceCollector } from "./device";
 import { OPERATIONS } from "./operations";
-import { MgplGraphQLError, type GraphQLErrorItem } from "./transport";
+import { AUTH_MODE_HEADER, MgplGraphQLError, type GraphQLErrorItem } from "./transport";
 import type { LoginResult, User } from "./types";
 
-/** What the manager keeps. Only the access token is required (e.g. a token from elsewhere). */
+/**
+ * What the manager keeps. Bearer mode needs the access token (e.g. a token from elsewhere). Cookie mode
+ * (`cookies: true`) keeps no token at all: the api holds them in httpOnly cookies, and this only
+ * remembers that a session exists, when it expires and who it is.
+ */
 export interface StoredSession {
-  accessToken: string;
+  accessToken?: string | null;
+  /** A cookie session: the tokens are httpOnly cookies the page cannot read. */
+  cookie?: boolean;
   accessExpiresAt?: string | null;
   refreshToken?: string | null;
   refreshExpiresAt?: string | null;
@@ -22,9 +28,10 @@ export interface StoredSession {
 }
 
 /**
- * Where the tokens live. Memory (default) is the safest in a browser; localStorage survives reloads
- * and syncs tabs but is readable by any script on the page (XSS). Your choice; implement your own for
- * React Native (SecureStore / Keychain), Electron, cookies via your server, …
+ * Where the session lives. In a browser, use cookie mode (`cookies: true`): the tokens stay in httpOnly
+ * cookies and the storage holds only expiry times and the user, so localStorage is fine there. In bearer
+ * mode, memory (default) is the safest; localStorage would hold the tokens where any script on the page
+ * can read them (XSS). Implement your own for React Native (SecureStore / Keychain), Electron, …
  */
 export interface SessionStorage {
   get(): StoredSession | null;
@@ -46,7 +53,7 @@ export function webSessionStorage(o: { key?: string; storage?: Storage } = {}): 
   const read = (raw: string | null): StoredSession | null => {
     try {
       const v = raw ? (JSON.parse(raw) as StoredSession) : null;
-      return v && typeof v.accessToken === "string" ? v : null;
+      return v && (typeof v.accessToken === "string" || v.cookie === true) ? v : null;
     } catch {
       return null;
     }
@@ -79,6 +86,12 @@ export interface SessionSnapshot {
 export interface SessionManagerOptions {
   /** The API's GraphQL endpoint (used for refreshSession). Default "/graphql". */
   url?: string;
+  /**
+   * Cookie mode, for browsers (api 0.2+): every request carries `x-mgpl-auth: cookie` and credentials, the
+   * api sets the tokens as httpOnly cookies, and no token ever reaches JavaScript or the storage.
+   * Default false (bearer tokens, for Node.js, workers and native apps).
+   */
+  cookies?: boolean;
   fetch?: typeof fetch;
   /** Default: memory. */
   storage?: SessionStorage;
@@ -92,12 +105,14 @@ export interface SessionManagerOptions {
 }
 
 export interface SessionManager {
+  /** Cookie mode (`cookies: true`): no tokens on this side, the api keeps them in httpOnly cookies. */
+  readonly cookies?: boolean;
   getSnapshot(): SessionSnapshot;
   /** Calls `listener` with each new snapshot; returns the unsubscribe function. */
   subscribe(listener: (snapshot: SessionSnapshot) => void): () => void;
   /** Svelte-style readable store: calls `run` at once and on every change. */
   readonly store: { subscribe(run: (snapshot: SessionSnapshot) => void): () => void };
-  /** A valid access token, refreshed first when it is about to expire; null when signed out. */
+  /** A valid access token, refreshed first when it is about to expire; null when signed out, and always null in cookie mode (it refreshes all the same). */
   accessToken(): Promise<string | null>;
   /** Trades the refresh token for a new pair (one request at a time across calls and tabs). True when it worked. */
   refresh(): Promise<boolean>;
@@ -109,10 +124,14 @@ export interface SessionManager {
   current(): StoredSession | null;
   /** Device signals for login (undefined when disabled). */
   device(): Promise<DeviceSignals | undefined>;
-  /** `{ authorization: "Bearer …" }` (refreshed first when needed), or {}: for clients that take headers. */
+  /**
+   * `{ authorization: "Bearer …" }` (refreshed first when needed), or {}: for clients that take headers.
+   * Cookie mode: `{ "x-mgpl-auth": "cookie" }`; send the request with `credentials: "include"` too.
+   */
   headers(): Promise<Record<string, string>>;
   /**
-   * A fetch that adds the access token and, on UNAUTHENTICATED, refreshes once and retries. Give it
+   * A fetch that adds the access token (cookie mode: the x-mgpl-auth header and credentials) and, on
+   * UNAUTHENTICATED, refreshes once and retries. Give it
    * to Apollo (HttpLink fetch), urql (fetch), graphql-request, ky, axios adapters, or call it directly.
    */
   fetch: typeof fetch;
@@ -121,10 +140,14 @@ export interface SessionManager {
 const REFRESH = OPERATIONS.refreshSession.document;
 const LOCK = "mgpl-session-refresh";
 
-const toStored = (r: LoginResult | StoredSession): StoredSession =>
-  "refreshToken" in r && "accessExpiresAt" in r
-    ? { accessToken: r.accessToken, accessExpiresAt: r.accessExpiresAt ?? null, refreshToken: r.refreshToken ?? null, refreshExpiresAt: r.refreshExpiresAt ?? null, user: r.user ?? null }
-    : (r as StoredSession);
+const toStored = (r: LoginResult | StoredSession, cookies: boolean): StoredSession => {
+  const v: StoredSession =
+    "refreshToken" in r && "accessExpiresAt" in r
+      ? { accessToken: r.accessToken, accessExpiresAt: r.accessExpiresAt ?? null, refreshToken: r.refreshToken ?? null, refreshExpiresAt: r.refreshExpiresAt ?? null, user: r.user ?? null }
+      : (r as StoredSession);
+  // cookie mode never keeps a token, even if a server without cookie support sent one
+  return cookies ? { cookie: true, accessExpiresAt: v.accessExpiresAt ?? null, refreshExpiresAt: v.refreshExpiresAt ?? null, user: v.user ?? null } : v;
+};
 
 async function isUnauthenticated(res: Response): Promise<boolean> {
   if (res.status === 401) return true;
@@ -140,6 +163,7 @@ async function isUnauthenticated(res: Response): Promise<boolean> {
 export function createSessionManager(o: SessionManagerOptions = {}): SessionManager {
   const url = o.url ?? "/graphql";
   const doFetch = o.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  const cookies = o.cookies === true;
   const storage = o.storage ?? memorySessionStorage();
   const device = o.device === false ? null : (o.device ?? createDeviceCollector());
   const margin = o.refreshMarginMs ?? 30_000;
@@ -164,7 +188,10 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
   storage.subscribe?.((v) => emit(v));
 
   const expiresSoon = (v: StoredSession) => !!v.accessExpiresAt && Date.parse(v.accessExpiresAt) - margin <= Date.now();
-  const refreshDead = (v: StoredSession) => !v.refreshToken || (!!v.refreshExpiresAt && Date.parse(v.refreshExpiresAt) <= Date.now());
+  const refreshDead = (v: StoredSession) => (!v.refreshToken && !v.cookie) || (!!v.refreshExpiresAt && Date.parse(v.refreshExpiresAt) <= Date.now());
+  const canRefresh = (v: StoredSession | null) => !!v && (cookies ? !!v.cookie : !!v.refreshToken);
+  // what changes on every refresh: the refresh token, or (cookie mode) the expiry the server sent
+  const version = (v: StoredSession) => (v.cookie ? `${v.accessExpiresAt}|${v.refreshExpiresAt}` : v.refreshToken);
 
   function signOut(reason: SignOutReason = "logout") {
     const had = !!storage.get();
@@ -174,12 +201,12 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
 
   async function runRefresh(): Promise<boolean> {
     const before = storage.get();
-    if (!before?.refreshToken) return false;
+    if (!canRefresh(before)) return false;
     const work = async (): Promise<boolean> => {
       // another tab may have refreshed while we waited for the lock: use its tokens
       const cur = storage.get();
       if (!cur) return false;
-      if (cur.refreshToken !== before.refreshToken && !expiresSoon(cur)) {
+      if (version(cur) !== version(before!) && !expiresSoon(cur)) {
         emit(cur);
         return true;
       }
@@ -191,8 +218,10 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
       try {
         res = await doFetch(url, {
           method: "POST",
-          headers: { "content-type": "application/json", accept: "application/graphql-response+json, application/json", ...o.headers },
-          body: JSON.stringify({ query: REFRESH, variables: { refreshToken: cur.refreshToken, device: device ? await device.get().catch(() => undefined) : undefined } }),
+          headers: { "content-type": "application/json", accept: "application/graphql-response+json, application/json", ...o.headers, ...(cookies ? { [AUTH_MODE_HEADER]: "cookie" } : {}) },
+          // cookie mode: no argument, the api reads the refresh cookie and sets new cookies
+          ...(cookies ? { credentials: "include" as const } : {}),
+          body: JSON.stringify({ query: REFRESH, variables: { refreshToken: cookies ? undefined : cur.refreshToken, device: device ? await device.get().catch(() => undefined) : undefined } }),
         });
       } catch (e) {
         throw new MgplGraphQLError((e as Error).message || "Network error", [], 0); // offline: keep the session
@@ -200,7 +229,7 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
       const body = (await res.json().catch(() => null)) as { data?: { refreshSession?: LoginResult } | null; errors?: GraphQLErrorItem[] } | null;
       const pair = body?.data?.refreshSession;
       if (pair) {
-        save(toStored(pair));
+        save(toStored(pair, cookies));
         return true;
       }
       const code = body?.errors?.[0]?.extensions?.code;
@@ -216,6 +245,7 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
   }
 
   const manager: SessionManager = {
+    cookies,
     getSnapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener);
@@ -230,17 +260,17 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
     async accessToken() {
       const v = storage.get();
       if (!v) return null;
-      if (expiresSoon(v) && v.refreshToken) {
+      if (expiresSoon(v) && canRefresh(v)) {
         await manager.refresh();
         return storage.get()?.accessToken ?? null;
       }
-      return v.accessToken;
+      return v.accessToken ?? null;
     },
     refresh() {
       return (inflight ??= runRefresh().finally(() => (inflight = undefined)));
     },
     signIn(result) {
-      save(toStored(result));
+      save(toStored(result, cookies));
     },
     signOut,
     current: () => storage.get(),
@@ -249,17 +279,22 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
     },
     async headers(): Promise<Record<string, string>> {
       const t = await manager.accessToken();
+      if (cookies) return { [AUTH_MODE_HEADER]: "cookie" };
       return t ? { authorization: `Bearer ${t}` } : {};
     },
     async fetch(input, init) {
       const send = async () => {
         const headers = new Headers(init?.headers);
         const t = await manager.accessToken();
+        if (cookies) {
+          headers.set(AUTH_MODE_HEADER, "cookie");
+          return doFetch(input, { credentials: "include", ...init, headers });
+        }
         if (t) headers.set("authorization", `Bearer ${t}`);
         return doFetch(input, { ...init, headers });
       };
       const res = await send();
-      if (storage.get()?.refreshToken && (await isUnauthenticated(res)) && (await manager.refresh())) return send();
+      if (canRefresh(storage.get()) && (await isUnauthenticated(res)) && (await manager.refresh())) return send();
       return res;
     },
   };

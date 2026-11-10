@@ -41,7 +41,8 @@ export interface Session { id: ID; current: boolean; createdAt: DateTime; lastSe
 /** login and refreshSession. The access token goes in `Authorization: Bearer`; the refresh token buys the next pair. */
 /** A lab the signed-in person can work in (myOrganizations), or one to pick after ORG_REQUIRED (no `current` there). */
 export interface OrganizationChoice { code: string; name: string; current: boolean }
-export interface LoginResult { accessToken: string; accessExpiresAt: DateTime; refreshToken: string; refreshExpiresAt: DateTime; user: User }
+/** accessToken and refreshToken are null for a cookie session (the api set them as httpOnly cookies). */
+export interface LoginResult { accessToken: string | null; accessExpiresAt: DateTime; refreshToken: string | null; refreshExpiresAt: DateTime; user: User }
 export interface Branch { id: ID; code: string; name: string; kind: BranchKind; phone: string | null; gstin: string | null; stateCode: string | null; address: Address | null; active: boolean }
 export interface Organization { id: ID; name: string; code: string; legalName: string | null; gstin: string | null; phone: string | null; email: string | null; address: Address | null; branches: Branch[] }
 export interface Viewer { user: User; organization: Organization; permissions: string[] }

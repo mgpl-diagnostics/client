@@ -14,7 +14,7 @@ sequenceDiagram
   API-->>C: { accessToken, refreshToken, user }
   C->>C: session.signIn(…)
   App->>C: invoices.issue({...})
-  C->>API: mutation IssueInvoice (Authorization: Bearer accessToken, refreshed first when it expires)
+  C->>API: mutation IssueInvoice (session cookies in browsers, or Authorization: Bearer; refreshed first when it expires)
   API-->>C: data.issueInvoice
   C-->>App: Invoice
 ```

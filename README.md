@@ -70,7 +70,7 @@ schema by the api's contract test.
 ```mermaid
 flowchart LR
   UI["Your UI"] --> G["createMgplGraphQLClient()"]
-  G -- "POST /graphql<br/>Authorization: Bearer token" --> API["mgpl-diagnostics/api"]
+  G -- "POST /graphql<br/>httpOnly cookies (browsers) or Bearer token" --> API["mgpl-diagnostics/api"]
   API --> K["auth · db · catalog · report · invoice · tally · finance kits"]
 ```
 
@@ -97,8 +97,9 @@ try {
 }
 ```
 
-**Sessions work with any library.** `mgpl.session` is a framework-agnostic session manager: access and
-refresh tokens, automatic single-flight refresh (across tabs too), device signals bound to the refresh
+**Sessions work with any library.** `mgpl.session` is a framework-agnostic session manager: in browsers,
+cookie mode (`createSessionManager({ cookies: true })`, the api keeps the tokens in httpOnly cookies and
+no script ever sees one); elsewhere, access and refresh tokens, automatic single-flight refresh (across tabs too), device signals bound to the refresh
 token, `subscribe` / `getSnapshot` for React, Vue, Svelte or Solid, `session.fetch` for Apollo, urql or
 graphql-request, and `mgplQuery` / `mgplMutation` / `mgplFetcher` for TanStack Query and SWR. See
 [docs/session.md](docs/session.md).

@@ -101,7 +101,7 @@ schema by the api's contract test.
 ```mermaid
 flowchart LR
   UI["Your UI"] --> G["createMgplGraphQLClient()"]
-  G -- "POST /graphql<br/>Authorization: Bearer token" --> API["mgpl-diagnostics/api"]
+  G -- "POST /graphql<br/>httpOnly cookies (browsers) or Bearer token" --> API["mgpl-diagnostics/api"]
   API --> K["auth · db · catalog · report · invoice · tally · finance kits"]
 ```
 
@@ -128,8 +128,9 @@ try {
 }
 ```
 
-**Sessions work with any library.** `mgpl.session` is a framework-agnostic session manager: access and
-refresh tokens, automatic single-flight refresh (across tabs too), device signals bound to the refresh
+**Sessions work with any library.** `mgpl.session` is a framework-agnostic session manager: in browsers,
+cookie mode (`createSessionManager({ cookies: true })`, the api keeps the tokens in httpOnly cookies and
+no script ever sees one); elsewhere, access and refresh tokens, automatic single-flight refresh (across tabs too), device signals bound to the refresh
 token, `subscribe` / `getSnapshot` for React, Vue, Svelte or Solid, `session.fetch` for Apollo, urql or
 graphql-request, and `mgplQuery` / `mgplMutation` / `mgplFetcher` for TanStack Query and SWR. See
 [docs/session.md](docs/session.md).
@@ -422,7 +423,7 @@ sequenceDiagram
   API-->>C: { accessToken, refreshToken, user }
   C->>C: session.signIn(…)
   App->>C: invoices.issue({...})
-  C->>API: mutation IssueInvoice (Authorization: Bearer accessToken, refreshed first when it expires)
+  C->>API: mutation IssueInvoice (session cookies in browsers, or Authorization: Bearer; refreshed first when it expires)
   API-->>C: data.issueInvoice
   C-->>App: Invoice
 ```
@@ -777,8 +778,15 @@ const reports = await api.imports.apply(ext.id, mappings, { confirmPatientMismat
 
 The API signs users in with **two tokens**:
 
-- a short-lived **access token**: a JWT sent as `Authorization: Bearer`, 15 minutes by default;
+- a short-lived **access token**: a JWT, 15 minutes by default;
 - a long-lived, single-use **refresh token**, which buys the next pair (`refreshSession`).
+
+They travel one of two ways:
+
+- **cookie mode** (`cookies: true`, for browsers): the api sets both as httpOnly, Secure, SameSite=Strict
+  cookies, and no token ever reaches JavaScript or the storage. Needs an api with cookie sessions;
+- **bearer mode** (the default, for Node.js, workers and native apps): the tokens come back in the answer
+  and the access token is sent as `Authorization: Bearer`.
 
 The SDK's **session manager** handles them for you, with no dependency and no framework:
 
@@ -810,39 +818,66 @@ sequenceDiagram
 
 ## Setup
 
+### Browsers: cookie mode
+
 ```ts
 import { createMgplGraphQLClient, createSessionManager, webSessionStorage } from "@mgpl-diagnostics/client";
 
-// default: tokens in memory (lost on reload; safest against XSS)
-const mgpl = createMgplGraphQLClient({ url: "https://api.your-lab.in/graphql" });
-
-// or: survive reloads and sync tabs (localStorage is readable by any script on the page)
 const session = createSessionManager({
-  url: "https://api.your-lab.in/graphql",
-  storage: webSessionStorage(),            // or memorySessionStorage(), or your own SessionStorage
+  url: "/graphql",
+  cookies: true,                           // tokens in httpOnly cookies, set and read by the api
+  storage: webSessionStorage(),            // only { cookie, accessExpiresAt, refreshExpiresAt, user }: survives reloads, syncs tabs
   onSignedOut: (reason) => router.push("/login"),
 });
+const mgpl = createMgplGraphQLClient({ url: "/graphql", session });
+
+await mgpl.auth.login({ email, password });   // the api sets the cookies; accessToken and refreshToken are null
+await mgpl.auth.logout();                     // the api ends the session and clears the cookies
+```
+
+Every request carries `x-mgpl-auth: cookie` and `credentials: "include"`. The api reads the cookies only
+with that header and from an allowed origin (its own host or `CORS_ORIGINS`), which is its CSRF check:
+a cross-site form cannot send a custom header. `session.fetch` and `session.headers()` add the header too;
+a library that takes only headers must also send `credentials: "include"`.
+
+The refresh works as in bearer mode (shortly before `accessExpiresAt`, once more on `UNAUTHENTICATED`, one
+at a time across tabs), with `refreshSession(device)` and no token. `accessToken()` is always null.
+A page served from another site than the api needs `AUTH_COOKIE_SAMESITE=none` on the api; same site
+(`app.lab.in` and `api.lab.in`, or one origin behind a proxy) works with the default.
+
+### Node.js, workers, native apps: bearer mode
+
+```ts
+// default: tokens in memory (lost on reload)
+const mgpl = createMgplGraphQLClient({ url: "https://api.your-lab.in/graphql" });
+
+// or your own storage: SecureStore / Keychain on React Native, safeStorage in Electron
+const session = createSessionManager({ url: "https://api.your-lab.in/graphql", storage: mySecureStorage });
 const mgpl2 = createMgplGraphQLClient({ url: "https://api.your-lab.in/graphql", session });
 
 await mgpl2.auth.login({ email, password });   // device signals are added for you
 await mgpl2.auth.logout();                     // ends the server session (by refresh token), clears storage
 ```
 
+Don't use `webSessionStorage()` in bearer mode in a browser: localStorage is readable by any script on the
+page, so an XSS bug could copy the refresh token. Use cookie mode there.
+
 `SessionStorage` is `{ get(), set(value), subscribe?(listener) }`. On React Native, implement it on
-SecureStore or Keychain; in Electron, on safeStorage.
+SecureStore or Keychain; in Electron, on safeStorage. In cookie mode it never receives a token.
 
 | Session manager | |
 | --- | --- |
 | `getSnapshot()` / `subscribe(listener)` | `{ status, user, accessExpiresAt, refreshExpiresAt }`; same object until it changes |
 | `store` | Svelte-style readable store |
-| `accessToken()` | a valid access token (refreshed first when needed) or null |
+| `cookies` | true in cookie mode |
+| `accessToken()` | a valid access token (refreshed first when needed) or null; always null in cookie mode |
 | `refresh()` | single-flight refresh; true when it worked |
 | `signIn(result)` / `signOut(reason?)` / `current()` | keep, forget or read the tokens |
-| `headers()` | `{ authorization }` for clients that take a headers function |
-| `fetch` | a fetch that adds the token and refreshes and retries once on `UNAUTHENTICATED` |
+| `headers()` | `{ authorization }` (cookie mode: `{ "x-mgpl-auth": "cookie" }`) for clients that take a headers function |
+| `fetch` | a fetch that adds the token (cookie mode: the header and credentials) and refreshes and retries once on `UNAUTHENTICATED` |
 | `device()` | the device signals |
 
-Options: `url`, `fetch`, `storage`, `device` (a collector, or `false`), `refreshMarginMs` (default 30 s),
+Options: `url`, `cookies` (default false), `fetch`, `storage`, `device` (a collector, or `false`), `refreshMarginMs` (default 30 s),
 `headers`, `onSignedOut`.
 
 ## Any UI or data library
@@ -973,7 +1008,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1119,6 +1154,8 @@ type Csv = { bom?: boolean };
 export interface MgplGraphQLClientOptions extends GraphQLClientOptions {
   /** Device signals for the default session manager (ignored when you pass `session`). false: none. */
   device?: DeviceCollector | false;
+  /** Cookie mode for the default session manager (ignored when you pass `session`): see SessionManagerOptions.cookies. */
+  cookies?: boolean;
 }
 
 export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
@@ -1127,6 +1164,7 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
     createSessionManager({
       url: opts.url,
       fetch: opts.fetch,
+      cookies: opts.cookies,
       storage: memorySessionStorage(opts.token ? { accessToken: opts.token } : null),
       device: opts.device === false ? false : (opts.device ?? createDeviceCollector()),
     });
@@ -1174,11 +1212,14 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       },
       /** Trades the refresh token for new tokens now (the client also does it by itself when needed). */
       refresh: () => session.refresh(),
-      /** Ends this session on the server (by its refresh token, so an expired access token is fine) and forgets the tokens. */
+      /**
+       * Ends this session on the server (by its refresh token, so an expired access token is fine) and forgets
+       * the tokens. Cookie mode: the api ends the session of the refresh cookie and clears both cookies.
+       */
       async logout(): Promise<void> {
         const cur = session.current();
         try {
-          if (cur) await transport.request(O.logout.document, { refreshToken: cur.refreshToken ?? undefined });
+          if (cur || session.cookies) await transport.request(O.logout.document, { refreshToken: cur?.refreshToken ?? undefined });
         } catch {
           /* already ended on the server */
         } finally {
@@ -1632,7 +1673,7 @@ export {
 } from "./session";
 export { createDeviceCollector, deviceInfo, fingerprintOf, randomId, type DeviceCollector, type DeviceOptions, type DeviceSignals, type DeviceStore, type SignalSource } from "./device";
 export { clearOnSignOut, mgplFetcher, mgplKey, mgplMutation, mgplQuery, runOperation, type RequestClient } from "./query";
-export { createTransport, MgplGraphQLError, organizationChoices, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
+export { AUTH_MODE_HEADER, createTransport, MgplGraphQLError, organizationChoices, type GraphQLClientOptions, type GraphQLErrorItem, type Transport, type Variables } from "./transport";
 export { OPERATIONS, FRAGMENTS, withFragments, type Operation, type OperationName } from "./operations";
 export type * from "./types";
 ```
@@ -1840,7 +1881,7 @@ export const OPERATIONS = {
     document: `query Can($permission: String!, $branchId: ID) { viewer { can(permission: $permission, branchId: $branchId) } }`,
   } as Operation,
   login: m("login", "$input: LoginInput!", "...LoginResultFields"),
-  refreshSession: m("refreshSession", "$refreshToken: String!, $device: DeviceInput", "...LoginResultFields"),
+  refreshSession: m("refreshSession", "$refreshToken: String, $device: DeviceInput", "...LoginResultFields"),
   logout: m("logout", "$refreshToken: String"),
   logoutOtherSessions: m("logoutOtherSessions", ""),
   revokeSession: m("revokeSession", "$id: ID!"),
@@ -2228,12 +2269,18 @@ export function clearOnSignOut(session: SessionManager, cache: { clear(): void }
 import type { DeviceCollector, DeviceSignals } from "./device";
 import { createDeviceCollector } from "./device";
 import { OPERATIONS } from "./operations";
-import { MgplGraphQLError, type GraphQLErrorItem } from "./transport";
+import { AUTH_MODE_HEADER, MgplGraphQLError, type GraphQLErrorItem } from "./transport";
 import type { LoginResult, User } from "./types";
 
-/** What the manager keeps. Only the access token is required (e.g. a token from elsewhere). */
+/**
+ * What the manager keeps. Bearer mode needs the access token (e.g. a token from elsewhere). Cookie mode
+ * (`cookies: true`) keeps no token at all: the api holds them in httpOnly cookies, and this only
+ * remembers that a session exists, when it expires and who it is.
+ */
 export interface StoredSession {
-  accessToken: string;
+  accessToken?: string | null;
+  /** A cookie session: the tokens are httpOnly cookies the page cannot read. */
+  cookie?: boolean;
   accessExpiresAt?: string | null;
   refreshToken?: string | null;
   refreshExpiresAt?: string | null;
@@ -2241,9 +2288,10 @@ export interface StoredSession {
 }
 
 /**
- * Where the tokens live. Memory (default) is the safest in a browser; localStorage survives reloads
- * and syncs tabs but is readable by any script on the page (XSS). Your choice; implement your own for
- * React Native (SecureStore / Keychain), Electron, cookies via your server, …
+ * Where the session lives. In a browser, use cookie mode (`cookies: true`): the tokens stay in httpOnly
+ * cookies and the storage holds only expiry times and the user, so localStorage is fine there. In bearer
+ * mode, memory (default) is the safest; localStorage would hold the tokens where any script on the page
+ * can read them (XSS). Implement your own for React Native (SecureStore / Keychain), Electron, …
  */
 export interface SessionStorage {
   get(): StoredSession | null;
@@ -2265,7 +2313,7 @@ export function webSessionStorage(o: { key?: string; storage?: Storage } = {}): 
   const read = (raw: string | null): StoredSession | null => {
     try {
       const v = raw ? (JSON.parse(raw) as StoredSession) : null;
-      return v && typeof v.accessToken === "string" ? v : null;
+      return v && (typeof v.accessToken === "string" || v.cookie === true) ? v : null;
     } catch {
       return null;
     }
@@ -2298,6 +2346,12 @@ export interface SessionSnapshot {
 export interface SessionManagerOptions {
   /** The API's GraphQL endpoint (used for refreshSession). Default "/graphql". */
   url?: string;
+  /**
+   * Cookie mode, for browsers (api 0.2+): every request carries `x-mgpl-auth: cookie` and credentials, the
+   * api sets the tokens as httpOnly cookies, and no token ever reaches JavaScript or the storage.
+   * Default false (bearer tokens, for Node.js, workers and native apps).
+   */
+  cookies?: boolean;
   fetch?: typeof fetch;
   /** Default: memory. */
   storage?: SessionStorage;
@@ -2311,12 +2365,14 @@ export interface SessionManagerOptions {
 }
 
 export interface SessionManager {
+  /** Cookie mode (`cookies: true`): no tokens on this side, the api keeps them in httpOnly cookies. */
+  readonly cookies?: boolean;
   getSnapshot(): SessionSnapshot;
   /** Calls `listener` with each new snapshot; returns the unsubscribe function. */
   subscribe(listener: (snapshot: SessionSnapshot) => void): () => void;
   /** Svelte-style readable store: calls `run` at once and on every change. */
   readonly store: { subscribe(run: (snapshot: SessionSnapshot) => void): () => void };
-  /** A valid access token, refreshed first when it is about to expire; null when signed out. */
+  /** A valid access token, refreshed first when it is about to expire; null when signed out, and always null in cookie mode (it refreshes all the same). */
   accessToken(): Promise<string | null>;
   /** Trades the refresh token for a new pair (one request at a time across calls and tabs). True when it worked. */
   refresh(): Promise<boolean>;
@@ -2328,10 +2384,14 @@ export interface SessionManager {
   current(): StoredSession | null;
   /** Device signals for login (undefined when disabled). */
   device(): Promise<DeviceSignals | undefined>;
-  /** `{ authorization: "Bearer …" }` (refreshed first when needed), or {}: for clients that take headers. */
+  /**
+   * `{ authorization: "Bearer …" }` (refreshed first when needed), or {}: for clients that take headers.
+   * Cookie mode: `{ "x-mgpl-auth": "cookie" }`; send the request with `credentials: "include"` too.
+   */
   headers(): Promise<Record<string, string>>;
   /**
-   * A fetch that adds the access token and, on UNAUTHENTICATED, refreshes once and retries. Give it
+   * A fetch that adds the access token (cookie mode: the x-mgpl-auth header and credentials) and, on
+   * UNAUTHENTICATED, refreshes once and retries. Give it
    * to Apollo (HttpLink fetch), urql (fetch), graphql-request, ky, axios adapters, or call it directly.
    */
   fetch: typeof fetch;
@@ -2340,10 +2400,14 @@ export interface SessionManager {
 const REFRESH = OPERATIONS.refreshSession.document;
 const LOCK = "mgpl-session-refresh";
 
-const toStored = (r: LoginResult | StoredSession): StoredSession =>
-  "refreshToken" in r && "accessExpiresAt" in r
-    ? { accessToken: r.accessToken, accessExpiresAt: r.accessExpiresAt ?? null, refreshToken: r.refreshToken ?? null, refreshExpiresAt: r.refreshExpiresAt ?? null, user: r.user ?? null }
-    : (r as StoredSession);
+const toStored = (r: LoginResult | StoredSession, cookies: boolean): StoredSession => {
+  const v: StoredSession =
+    "refreshToken" in r && "accessExpiresAt" in r
+      ? { accessToken: r.accessToken, accessExpiresAt: r.accessExpiresAt ?? null, refreshToken: r.refreshToken ?? null, refreshExpiresAt: r.refreshExpiresAt ?? null, user: r.user ?? null }
+      : (r as StoredSession);
+  // cookie mode never keeps a token, even if a server without cookie support sent one
+  return cookies ? { cookie: true, accessExpiresAt: v.accessExpiresAt ?? null, refreshExpiresAt: v.refreshExpiresAt ?? null, user: v.user ?? null } : v;
+};
 
 async function isUnauthenticated(res: Response): Promise<boolean> {
   if (res.status === 401) return true;
@@ -2359,6 +2423,7 @@ async function isUnauthenticated(res: Response): Promise<boolean> {
 export function createSessionManager(o: SessionManagerOptions = {}): SessionManager {
   const url = o.url ?? "/graphql";
   const doFetch = o.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  const cookies = o.cookies === true;
   const storage = o.storage ?? memorySessionStorage();
   const device = o.device === false ? null : (o.device ?? createDeviceCollector());
   const margin = o.refreshMarginMs ?? 30_000;
@@ -2383,7 +2448,10 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
   storage.subscribe?.((v) => emit(v));
 
   const expiresSoon = (v: StoredSession) => !!v.accessExpiresAt && Date.parse(v.accessExpiresAt) - margin <= Date.now();
-  const refreshDead = (v: StoredSession) => !v.refreshToken || (!!v.refreshExpiresAt && Date.parse(v.refreshExpiresAt) <= Date.now());
+  const refreshDead = (v: StoredSession) => (!v.refreshToken && !v.cookie) || (!!v.refreshExpiresAt && Date.parse(v.refreshExpiresAt) <= Date.now());
+  const canRefresh = (v: StoredSession | null) => !!v && (cookies ? !!v.cookie : !!v.refreshToken);
+  // what changes on every refresh: the refresh token, or (cookie mode) the expiry the server sent
+  const version = (v: StoredSession) => (v.cookie ? `${v.accessExpiresAt}|${v.refreshExpiresAt}` : v.refreshToken);
 
   function signOut(reason: SignOutReason = "logout") {
     const had = !!storage.get();
@@ -2393,12 +2461,12 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
 
   async function runRefresh(): Promise<boolean> {
     const before = storage.get();
-    if (!before?.refreshToken) return false;
+    if (!canRefresh(before)) return false;
     const work = async (): Promise<boolean> => {
       // another tab may have refreshed while we waited for the lock: use its tokens
       const cur = storage.get();
       if (!cur) return false;
-      if (cur.refreshToken !== before.refreshToken && !expiresSoon(cur)) {
+      if (version(cur) !== version(before!) && !expiresSoon(cur)) {
         emit(cur);
         return true;
       }
@@ -2410,8 +2478,10 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
       try {
         res = await doFetch(url, {
           method: "POST",
-          headers: { "content-type": "application/json", accept: "application/graphql-response+json, application/json", ...o.headers },
-          body: JSON.stringify({ query: REFRESH, variables: { refreshToken: cur.refreshToken, device: device ? await device.get().catch(() => undefined) : undefined } }),
+          headers: { "content-type": "application/json", accept: "application/graphql-response+json, application/json", ...o.headers, ...(cookies ? { [AUTH_MODE_HEADER]: "cookie" } : {}) },
+          // cookie mode: no argument, the api reads the refresh cookie and sets new cookies
+          ...(cookies ? { credentials: "include" as const } : {}),
+          body: JSON.stringify({ query: REFRESH, variables: { refreshToken: cookies ? undefined : cur.refreshToken, device: device ? await device.get().catch(() => undefined) : undefined } }),
         });
       } catch (e) {
         throw new MgplGraphQLError((e as Error).message || "Network error", [], 0); // offline: keep the session
@@ -2419,7 +2489,7 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
       const body = (await res.json().catch(() => null)) as { data?: { refreshSession?: LoginResult } | null; errors?: GraphQLErrorItem[] } | null;
       const pair = body?.data?.refreshSession;
       if (pair) {
-        save(toStored(pair));
+        save(toStored(pair, cookies));
         return true;
       }
       const code = body?.errors?.[0]?.extensions?.code;
@@ -2435,6 +2505,7 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
   }
 
   const manager: SessionManager = {
+    cookies,
     getSnapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener);
@@ -2449,17 +2520,17 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
     async accessToken() {
       const v = storage.get();
       if (!v) return null;
-      if (expiresSoon(v) && v.refreshToken) {
+      if (expiresSoon(v) && canRefresh(v)) {
         await manager.refresh();
         return storage.get()?.accessToken ?? null;
       }
-      return v.accessToken;
+      return v.accessToken ?? null;
     },
     refresh() {
       return (inflight ??= runRefresh().finally(() => (inflight = undefined)));
     },
     signIn(result) {
-      save(toStored(result));
+      save(toStored(result, cookies));
     },
     signOut,
     current: () => storage.get(),
@@ -2468,17 +2539,22 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
     },
     async headers(): Promise<Record<string, string>> {
       const t = await manager.accessToken();
+      if (cookies) return { [AUTH_MODE_HEADER]: "cookie" };
       return t ? { authorization: `Bearer ${t}` } : {};
     },
     async fetch(input, init) {
       const send = async () => {
         const headers = new Headers(init?.headers);
         const t = await manager.accessToken();
+        if (cookies) {
+          headers.set(AUTH_MODE_HEADER, "cookie");
+          return doFetch(input, { credentials: "include", ...init, headers });
+        }
         if (t) headers.set("authorization", `Bearer ${t}`);
         return doFetch(input, { ...init, headers });
       };
       const res = await send();
-      if (storage.get()?.refreshToken && (await isUnauthenticated(res)) && (await manager.refresh())) return send();
+      if (canRefresh(storage.get()) && (await isUnauthenticated(res)) && (await manager.refresh())) return send();
       return res;
     },
   };
@@ -2494,6 +2570,12 @@ export function createSessionManager(o: SessionManagerOptions = {}): SessionMana
 ```ts
 // The GraphQL transport: one POST per operation to the backend's single endpoint (mgpl-diagnostics/api).
 import type { SessionManager } from "./session";
+
+/**
+ * The header that asks the api for a cookie session: tokens in httpOnly cookies, never in JavaScript.
+ * Cross-site forms cannot send a custom header, so the api reads the cookies only when it is there (CSRF).
+ */
+export const AUTH_MODE_HEADER = "x-mgpl-auth";
 
 export interface GraphQLClientOptions {
   /** The endpoint: "/graphql" (same origin) or "https://api.your-lab.in/graphql". */
@@ -2511,7 +2593,7 @@ export interface GraphQLClientOptions {
   onToken?: (token: string | null) => void;
   /** Extra headers on every request. */
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
-  /** e.g. "include" when the API sits behind a cookie-forwarding proxy. */
+  /** Default "include" with a cookie-mode session (so the session cookies travel cross-origin too); unset otherwise. */
   credentials?: RequestCredentials;
 }
 
@@ -2559,16 +2641,19 @@ export function createTransport(opts: GraphQLClientOptions = {}) {
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const session = opts.session;
   let token: string | null = opts.token ?? null;
+  // cookie mode: the x-mgpl-auth header on every request (login included), never an Authorization header
+  const cookies = session?.cookies === true;
 
   async function once<T>(query: string, variables: Variables | undefined, init: { signal?: AbortSignal }): Promise<T> {
       const headers = new Headers(typeof opts.headers === "function" ? await opts.headers() : opts.headers);
       headers.set("content-type", "application/json");
       headers.set("accept", "application/graphql-response+json, application/json");
       const bearer = session ? await session.accessToken() : token;
-      if (bearer) headers.set("authorization", `Bearer ${bearer}`);
+      if (cookies) headers.set(AUTH_MODE_HEADER, "cookie");
+      else if (bearer) headers.set("authorization", `Bearer ${bearer}`);
       let res: Response;
       try {
-        res = await doFetch(url, { method: "POST", headers, credentials: opts.credentials, body: JSON.stringify({ query, variables }), signal: init.signal });
+        res = await doFetch(url, { method: "POST", headers, credentials: opts.credentials ?? (cookies ? "include" : undefined), body: JSON.stringify({ query, variables }), signal: init.signal });
       } catch (e) {
         throw new MgplGraphQLError((e as Error).message || "Network error", [], 0);
       }
@@ -2605,7 +2690,7 @@ export function createTransport(opts: GraphQLClientOptions = {}) {
       try {
         return await once<T>(query, variables, init);
       } catch (e) {
-        if (session && e instanceof MgplGraphQLError && e.code === "UNAUTHENTICATED" && session.current()?.refreshToken && (await session.refresh())) {
+        if (session && e instanceof MgplGraphQLError && e.code === "UNAUTHENTICATED" && (cookies ? !!session.current() : !!session.current()?.refreshToken) && (await session.refresh())) {
           return once<T>(query, variables, init);
         }
         throw e;
@@ -2666,7 +2751,8 @@ export interface Session { id: ID; current: boolean; createdAt: DateTime; lastSe
 /** login and refreshSession. The access token goes in `Authorization: Bearer`; the refresh token buys the next pair. */
 /** A lab the signed-in person can work in (myOrganizations), or one to pick after ORG_REQUIRED (no `current` there). */
 export interface OrganizationChoice { code: string; name: string; current: boolean }
-export interface LoginResult { accessToken: string; accessExpiresAt: DateTime; refreshToken: string; refreshExpiresAt: DateTime; user: User }
+/** accessToken and refreshToken are null for a cookie session (the api set them as httpOnly cookies). */
+export interface LoginResult { accessToken: string | null; accessExpiresAt: DateTime; refreshToken: string | null; refreshExpiresAt: DateTime; user: User }
 export interface Branch { id: ID; code: string; name: string; kind: BranchKind; phone: string | null; gstin: string | null; stateCode: string | null; address: Address | null; active: boolean }
 export interface Organization { id: ID; name: string; code: string; legalName: string | null; gstin: string | null; phone: string | null; email: string | null; address: Address | null; branches: Branch[] }
 export interface Viewer { user: User; organization: Organization; permissions: string[] }
@@ -2913,6 +2999,7 @@ export {
   bytesToBase64,
   fileToBase64,
   signatureDataUri,
+  AUTH_MODE_HEADER,
   createTransport,
   MgplGraphQLError,
   organizationChoices,
