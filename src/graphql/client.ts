@@ -215,6 +215,12 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       /** The signature images of one import (only ever from its own PDF). */
       signatures: async (id: T.ID) =>
         (await run<{ id: T.ID; signatories: { id: string; sha: string; image: T.SignatureImage | null }[] } | null>(O.externalReportSignatures, { id }))?.signatories ?? [],
+      /**
+       * Up to five bookings the import may belong to, best first (api 0.1.5+). An upload without a booking is matched
+       * on its own when exactly one strong candidate stands out; staff still apply.
+       */
+      candidates: async (id: T.ID) =>
+        (await run<{ id: T.ID; candidates: T.ExternalReportCandidate[] } | null>(O.externalReportCandidates, { id }))?.candidates ?? [],
       match: (id: T.ID, bookingId: T.ID) => run<T.ExternalReport>(O.matchExternalReport, { id, bookingId }),
       /** Throws BOOKING_PATIENT_MISMATCH when the patients differ, unless `confirmPatientMismatch`. */
       apply: (id: T.ID, mappings: T.ExternalTestMappingInput[], o: { confirmPatientMismatch?: boolean } = {}) =>
@@ -338,6 +344,22 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       gstr1: (range: Range, o: { gstin?: string } & Csv = {}) => run<T.CsvFile[]>(O.exportGstr1, { ...range, ...o }),
       gstr3b: (range: Range, o: { gstin?: string } & Csv = {}) => run<T.CsvFile>(O.exportGstr3b, { ...range, ...o }),
       settlement: (settlementId: T.ID, o: Csv = {}) => run<T.CsvFile>(O.exportSettlement, { settlementId, ...o }),
+    },
+
+    /**
+     * Patient links (api 0.1.5+): the QR on a booking's reports and bills opens a public page. `page` and `document`
+     * need no sign-in (the token from the URL is the key, rate-limited per IP); they return null for a link that
+     * does not open (unknown, expired, revoked). `forBooking` and `revoke` are for staff.
+     */
+    patientLinks: {
+      page: (token: string) => run<T.PatientPage | null>(O.patientPage, { token }),
+      /** A PDF: one of the page's bills (`invoiceId`) or its released reports. */
+      document: (token: string, kind: T.PatientDocumentKind, invoiceId?: T.ID) =>
+        run<T.RenderedDocument | null>(O.patientDocument, { token, kind, invoiceId }),
+      /** The booking's link, made on first use (booking:read and report:read). */
+      forBooking: (bookingId: T.ID) => run<T.PatientLinkInfo>(O.patientLink, { bookingId }),
+      /** Stops every link of the booking; printed QRs stop opening (booking:update). Returns how many stopped. */
+      revoke: (bookingId: T.ID) => run<number>(O.revokePatientLinks, { bookingId }),
     },
 
     /** Reports and invoices rendered by the server (report-kit / invoice-kit). PDFs come as base64. */

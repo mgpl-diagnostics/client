@@ -483,6 +483,16 @@ export const OPERATIONS = {
   ),
   job: q("job", "$id: ID!", "...JobFields"),
 
+  // ---------------------------------------------------------------- patient links (public page behind the printed QR)
+  patientPage: q(
+    "patientPage",
+    "$token: String!",
+    "labName patientName bookingNo bookedAt branch { name phone address } invoices { id invoiceNo issuedAt totalPaise paidPaise duePaise status } reports { id testName releasedAt } pending expiresAt",
+  ),
+  patientDocument: q("patientDocument", "$token: String!, $kind: PatientDocumentKind!, $invoiceId: ID", "...DocumentFields"),
+  patientLink: q("patientLink", "$bookingId: ID!", "url expiresAt"),
+  revokePatientLinks: m("revokePatientLinks", "$bookingId: ID!"),
+
   // ---------------------------------------------------------------- partner-lab imports
   externalReport: q("externalReport", "$id: ID!", "...ExternalReportFields"),
   externalReports: q(
@@ -493,6 +503,12 @@ export const OPERATIONS = {
   externalSignatories: q("externalSignatories", "$lab: ExternalLab", "...ExternalSignatoryFields"),
   /** Signature images are large: fetched on their own, only with their report. */
   externalReportSignatures: q("externalReport", "$id: ID!", "id signatories { id sha image { mimeType width height base64 } }"),
+  /** Bookings an import may belong to (searches patients): fetched on their own, only when shown. */
+  externalReportCandidates: q(
+    "externalReport",
+    "$id: ID!",
+    "id candidates(first: 5) { booking { ...BookingFields } score strong reasons patientMismatches mappings { testIndex testCode } }",
+  ),
   importExternalReport: m(
     "importExternalReport",
     "$pdfBase64: String!, $fileName: String, $bookingId: ID, $branchId: ID",
