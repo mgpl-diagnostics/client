@@ -178,7 +178,8 @@ docs (`docs/04-api-reference.md`).
 |---|---|
 | `list` | query `bookings` |
 | `get` | query `booking` |
-| `create` | mutation `createBooking` |
+| `create` | mutation `createBooking` (`bill` issues the invoice in the same request) |
+| `update` | mutation `updateBooking` |
 | `cancel` | mutation `cancelBooking` |
 
 ### samples
