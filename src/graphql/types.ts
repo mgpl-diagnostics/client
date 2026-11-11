@@ -212,6 +212,24 @@ export interface ExternalReportCandidate {
   /** For each partner test (ExternalTest.index), the booked test it maps to. */
   mappings: { testIndex: number; testCode: string | null }[];
 }
+/** A booking's patient link (the URL the printed QR opens). */
+export interface PatientLinkInfo { url: string; expiresAt: DateTime }
+export type PatientDocumentKind = "invoice" | "reports";
+/** The public page behind a patient link: one booking's bills and released reports. The name is shortened. */
+export interface PatientPage {
+  labName: string;
+  patientName: string;
+  bookingNo: string;
+  bookedAt: DateTime;
+  branch: { name: string; phone: string | null; address: string | null };
+  /** Issued bills (no drafts, no cancelled ones). Paise. */
+  invoices: { id: ID; invoiceNo: string; issuedAt: DateTime; totalPaise: number; paidPaise: number; duePaise: number; status: string }[];
+  /** Released reports only. */
+  reports: { id: ID; testName: string; releasedAt: DateTime | null }[];
+  /** Tests still in the lab, by name. */
+  pending: string[];
+  expiresAt: DateTime;
+}
 export interface PageInfo { hasNextPage: boolean; endCursor: string | null }
 export interface ExternalReportConnection { nodes: ExternalReport[]; pageInfo: PageInfo }
 /** The organisation's partner signatory registry (data entered by staff). */

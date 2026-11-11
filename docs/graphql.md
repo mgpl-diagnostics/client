@@ -349,6 +349,27 @@ const reports = await api.imports.apply(ext.id, mappings, { confirmPatientMismat
 | `gstr3b` | query `exportGstr3b` |
 | `settlement` | query `exportSettlement` |
 
+### patientLinks
+
+The QR printed on a booking's reports and bills opens a public page (api 0.1.5+, when the server sets
+`PATIENT_LINK_SECRET` and `PATIENT_LINK_BASE_URL`). The URL ends with the token; `page` and `document` need no
+sign-in and answer null for a link that does not open. They are rate-limited per IP (`RATE_LIMITED`).
+
+| Method | GraphQL |
+|---|---|
+| `page` | query `patientPage` (public): lab, shortened patient name, booking number, branch, bills (paise), released reports, pending tests |
+| `document` | query `patientDocument` (public): a PDF of one bill (`kind: "invoice"`, `invoiceId`) or of the released reports (`kind: "reports"`) |
+| `forBooking` | query `patientLink` (staff, `booking:read` + `report:read`): `{ url, expiresAt }`, made on first use |
+| `revoke` | mutation `revokePatientLinks` (staff, `booking:update`): stops every link of the booking; the next print makes a new one |
+
+```ts
+// the public page at /r/<token>
+const page = await api.patientLinks.page(token);
+if (!page) return notFound();
+const pdf = await api.patientLinks.document(token, "reports");
+if (pdf) openBlob(documentBlob(pdf));
+```
+
 ### documents
 
 | Method | GraphQL |

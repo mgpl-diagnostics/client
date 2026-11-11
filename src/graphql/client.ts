@@ -346,6 +346,22 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       settlement: (settlementId: T.ID, o: Csv = {}) => run<T.CsvFile>(O.exportSettlement, { settlementId, ...o }),
     },
 
+    /**
+     * Patient links (api 0.1.5+): the QR on a booking's reports and bills opens a public page. `page` and `document`
+     * need no sign-in (the token from the URL is the key, rate-limited per IP); they return null for a link that
+     * does not open (unknown, expired, revoked). `forBooking` and `revoke` are for staff.
+     */
+    patientLinks: {
+      page: (token: string) => run<T.PatientPage | null>(O.patientPage, { token }),
+      /** A PDF: one of the page's bills (`invoiceId`) or its released reports. */
+      document: (token: string, kind: T.PatientDocumentKind, invoiceId?: T.ID) =>
+        run<T.RenderedDocument | null>(O.patientDocument, { token, kind, invoiceId }),
+      /** The booking's link, made on first use (booking:read and report:read). */
+      forBooking: (bookingId: T.ID) => run<T.PatientLinkInfo>(O.patientLink, { bookingId }),
+      /** Stops every link of the booking; printed QRs stop opening (booking:update). Returns how many stopped. */
+      revoke: (bookingId: T.ID) => run<number>(O.revokePatientLinks, { bookingId }),
+    },
+
     /** Reports and invoices rendered by the server (report-kit / invoice-kit). PDFs come as base64. */
     documents: {
       templates: () => run<T.ReportTemplateCatalog>(O.reportTemplates),
