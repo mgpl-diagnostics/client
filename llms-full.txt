@@ -587,7 +587,8 @@ docs (`docs/04-api-reference.md`).
 |---|---|
 | `list` | query `bookings` |
 | `get` | query `booking` |
-| `create` | mutation `createBooking` |
+| `create` | mutation `createBooking` (`bill` issues the invoice in the same request) |
+| `update` | mutation `updateBooking` |
 | `cancel` | mutation `cancelBooking` |
 
 ### samples
@@ -1008,7 +1009,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1311,6 +1312,11 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       get: (id: T.ID) => run<T.Booking | null>(O.booking, { id }),
       /** Creates the booking and one sample per sample type. */
       create: (input: T.CreateBookingInput) => run<T.CreateBookingResult>(O.createBooking, { input }),
+      /**
+       * Doctor, collection details, notes, tests (booking:update). Samples and billing follow: an unpaid invoice is
+       * cancelled and issued again; a paid one gets a credit note for removed tests and an invoice for added ones.
+       */
+      update: (id: T.ID, input: T.UpdateBookingInput) => run<T.UpdateBookingResult>(O.updateBooking, { id, input }),
       cancel: (id: T.ID) => run<T.Booking>(O.cancelBooking, { id }),
     },
 
@@ -1727,10 +1733,11 @@ export const FRAGMENTS: Record<string, string> = {
     id bookingNo status notes createdAt
     patient { id uhid name } doctor { id name } branch { ...BranchRef }
     tests { testCode name pricePaise sampleType }
-    sampleCollection { type scheduledAt }
+    sampleCollection { type scheduledAt address { ...AddressFields } }
     samples { ...SampleFields }
     reports { id testCode testName status }
     invoice { id invoiceNo status totalPaise duePaise }
+    invoices { id invoiceNo status totalPaise duePaise }
   }`,
 
   InvoiceFields: `fragment InvoiceFields on Invoice {
@@ -1947,7 +1954,12 @@ export const OPERATIONS = {
 
   bookings: q("bookings", `$branchId: ID, $patientId: ID, $status: BookingStatus, ${PAGE}`, "...BookingFields"),
   booking: q("booking", "$id: ID!", "...BookingFields"),
-  createBooking: m("createBooking", "$input: CreateBookingInput!", "booking { ...BookingFields } samples { ...SampleFields }"),
+  createBooking: m("createBooking", "$input: CreateBookingInput!", "booking { ...BookingFields } samples { ...SampleFields } invoice { ...InvoiceFields }"),
+  updateBooking: m(
+    "updateBooking",
+    "$id: ID!, $input: UpdateBookingInput!",
+    "booking { ...BookingFields } samples { ...SampleFields } issuedInvoices { ...InvoiceFields } cancelledInvoices { id invoiceNo } creditNotes { ...CreditNoteFields } refundablePaise",
+  ),
   cancelBooking: m("cancelBooking", "$id: ID!", "...BookingFields"),
 
   sample: q("sample", "$id: ID!", "...SampleFields"),
@@ -2788,10 +2800,14 @@ export interface BookingTest { testCode: string; name: string; pricePaise: numbe
 export interface Booking {
   id: ID; bookingNo: string; status: BookingStatus; notes: string | null; createdAt: DateTime;
   patient: { id: ID; uhid: string; name: string }; doctor: Ref | null; branch: BranchRef;
-  tests: BookingTest[]; sampleCollection: { type: CollectionType; scheduledAt: DateTime | null };
+  tests: BookingTest[]; sampleCollection: { type: CollectionType; scheduledAt: DateTime | null; address: Address | null };
   samples: Sample[]; reports: { id: ID; testCode: string; testName: string; status: ReportStatus }[];
-  invoice: { id: ID; invoiceNo: string; status: InvoiceStatus; totalPaise: number; duePaise: number } | null;
+  /** The booking's current invoice (the first one that is not cancelled). */
+  invoice: BookingInvoice | null;
+  /** Every invoice issued for the booking, oldest first (replacements, and invoices for tests added after payment). */
+  invoices: BookingInvoice[];
 }
+export interface BookingInvoice { id: ID; invoiceNo: string; status: InvoiceStatus; totalPaise: number; duePaise: number }
 
 // ------------------------------------------------------------------ billing
 
@@ -2925,7 +2941,20 @@ export type UpdatePatientInput = Partial<Omit<RegisterPatientInput, "branchId">>
 export interface DoctorInput { name: string; qualification?: string; phone?: string; clinic?: string; active?: boolean }
 /** A catalog code alone is enough: name, price and sample type come from the test catalog. */
 export interface BookingTestInput { testCode: string; name?: string; pricePaise?: number; sampleType?: string }
-export interface CreateBookingInput { branchId: ID; patientId: ID; doctorId?: ID; tests: BookingTestInput[]; collectionType?: CollectionType; scheduledAt?: DateTime; notes?: string }
+export interface CreateBookingInput {
+  branchId: ID; patientId: ID; doctorId?: ID; tests: BookingTestInput[]; collectionType?: CollectionType; scheduledAt?: DateTime; notes?: string;
+  /** Bill at once: an invoice for the booked tests in the same transaction (invoice:create; discount: invoice:discount; payments: payment:create). */
+  bill?: BookingBillInput;
+}
+export interface BookingBillInput { billDiscountPaise?: number; payments?: PaymentInput[]; applyTaxRules?: boolean }
+/**
+ * Changes to a booking; fields left out stay as they are. doctorId / scheduledAt / collectionAddress: null clears them.
+ * Tests can be removed only while they have no results.
+ */
+export interface UpdateBookingInput {
+  doctorId?: ID | null; collectionType?: CollectionType; scheduledAt?: DateTime | null; collectionAddress?: Address | null; notes?: string | null;
+  addTests?: BookingTestInput[]; removeTestCodes?: string[];
+}
 /** Unit, range and flag are filled from the catalog when omitted. */
 export interface ResultInput { parameter: string; value: string; unit?: string; flag?: ResultFlag; range?: string }
 /** A catalog code alone is enough: name and MRP come from the test catalog. */
@@ -2956,7 +2985,18 @@ export interface RenderOptions { format?: DocumentFormat; variant?: ReportVarian
 
 // ------------------------------------------------------------------ mutation results
 
-export interface CreateBookingResult { booking: Booking; samples: Sample[] }
+export interface CreateBookingResult { booking: Booking; samples: Sample[]; /** Issued with the booking when input.bill was given. */ invoice: Invoice | null }
+export interface UpdateBookingResult {
+  booking: Booking; samples: Sample[];
+  /** A replacement for an unpaid invoice, or an invoice for tests added after payment. */
+  issuedInvoices: Invoice[];
+  /** Unpaid invoices cancelled by the change. */
+  cancelledInvoices: { id: ID; invoiceNo: string }[];
+  /** Credit notes for removed tests on paid or already credited invoices. */
+  creditNotes: CreditNote[];
+  /** Paid money that can now be refunded (invoices.refund). */
+  refundablePaise: number;
+}
 export interface CreditNoteResult { creditNote: CreditNote; invoice: Invoice; refundablePaise: number }
 export interface BankImportResult { added: number; skipped: number; statement: BankStatement }
 export interface ReconcileResult { matched: number; unmatched: number; settlements: number }

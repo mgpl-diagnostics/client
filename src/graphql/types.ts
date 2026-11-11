@@ -74,10 +74,14 @@ export interface BookingTest { testCode: string; name: string; pricePaise: numbe
 export interface Booking {
   id: ID; bookingNo: string; status: BookingStatus; notes: string | null; createdAt: DateTime;
   patient: { id: ID; uhid: string; name: string }; doctor: Ref | null; branch: BranchRef;
-  tests: BookingTest[]; sampleCollection: { type: CollectionType; scheduledAt: DateTime | null };
+  tests: BookingTest[]; sampleCollection: { type: CollectionType; scheduledAt: DateTime | null; address: Address | null };
   samples: Sample[]; reports: { id: ID; testCode: string; testName: string; status: ReportStatus }[];
-  invoice: { id: ID; invoiceNo: string; status: InvoiceStatus; totalPaise: number; duePaise: number } | null;
+  /** The booking's current invoice (the first one that is not cancelled). */
+  invoice: BookingInvoice | null;
+  /** Every invoice issued for the booking, oldest first (replacements, and invoices for tests added after payment). */
+  invoices: BookingInvoice[];
 }
+export interface BookingInvoice { id: ID; invoiceNo: string; status: InvoiceStatus; totalPaise: number; duePaise: number }
 
 // ------------------------------------------------------------------ billing
 
@@ -211,7 +215,20 @@ export type UpdatePatientInput = Partial<Omit<RegisterPatientInput, "branchId">>
 export interface DoctorInput { name: string; qualification?: string; phone?: string; clinic?: string; active?: boolean }
 /** A catalog code alone is enough: name, price and sample type come from the test catalog. */
 export interface BookingTestInput { testCode: string; name?: string; pricePaise?: number; sampleType?: string }
-export interface CreateBookingInput { branchId: ID; patientId: ID; doctorId?: ID; tests: BookingTestInput[]; collectionType?: CollectionType; scheduledAt?: DateTime; notes?: string }
+export interface CreateBookingInput {
+  branchId: ID; patientId: ID; doctorId?: ID; tests: BookingTestInput[]; collectionType?: CollectionType; scheduledAt?: DateTime; notes?: string;
+  /** Bill at once: an invoice for the booked tests in the same transaction (invoice:create; discount: invoice:discount; payments: payment:create). */
+  bill?: BookingBillInput;
+}
+export interface BookingBillInput { billDiscountPaise?: number; payments?: PaymentInput[]; applyTaxRules?: boolean }
+/**
+ * Changes to a booking; fields left out stay as they are. doctorId / scheduledAt / collectionAddress: null clears them.
+ * Tests can be removed only while they have no results.
+ */
+export interface UpdateBookingInput {
+  doctorId?: ID | null; collectionType?: CollectionType; scheduledAt?: DateTime | null; collectionAddress?: Address | null; notes?: string | null;
+  addTests?: BookingTestInput[]; removeTestCodes?: string[];
+}
 /** Unit, range and flag are filled from the catalog when omitted. */
 export interface ResultInput { parameter: string; value: string; unit?: string; flag?: ResultFlag; range?: string }
 /** A catalog code alone is enough: name and MRP come from the test catalog. */
@@ -242,7 +259,18 @@ export interface RenderOptions { format?: DocumentFormat; variant?: ReportVarian
 
 // ------------------------------------------------------------------ mutation results
 
-export interface CreateBookingResult { booking: Booking; samples: Sample[] }
+export interface CreateBookingResult { booking: Booking; samples: Sample[]; /** Issued with the booking when input.bill was given. */ invoice: Invoice | null }
+export interface UpdateBookingResult {
+  booking: Booking; samples: Sample[];
+  /** A replacement for an unpaid invoice, or an invoice for tests added after payment. */
+  issuedInvoices: Invoice[];
+  /** Unpaid invoices cancelled by the change. */
+  cancelledInvoices: { id: ID; invoiceNo: string }[];
+  /** Credit notes for removed tests on paid or already credited invoices. */
+  creditNotes: CreditNote[];
+  /** Paid money that can now be refunded (invoices.refund). */
+  refundablePaise: number;
+}
 export interface CreditNoteResult { creditNote: CreditNote; invoice: Invoice; refundablePaise: number }
 export interface BankImportResult { added: number; skipped: number; statement: BankStatement }
 export interface ReconcileResult { matched: number; unmatched: number; settlements: number }

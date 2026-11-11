@@ -38,10 +38,11 @@ export const FRAGMENTS: Record<string, string> = {
     id bookingNo status notes createdAt
     patient { id uhid name } doctor { id name } branch { ...BranchRef }
     tests { testCode name pricePaise sampleType }
-    sampleCollection { type scheduledAt }
+    sampleCollection { type scheduledAt address { ...AddressFields } }
     samples { ...SampleFields }
     reports { id testCode testName status }
     invoice { id invoiceNo status totalPaise duePaise }
+    invoices { id invoiceNo status totalPaise duePaise }
   }`,
 
   InvoiceFields: `fragment InvoiceFields on Invoice {
@@ -258,7 +259,12 @@ export const OPERATIONS = {
 
   bookings: q("bookings", `$branchId: ID, $patientId: ID, $status: BookingStatus, ${PAGE}`, "...BookingFields"),
   booking: q("booking", "$id: ID!", "...BookingFields"),
-  createBooking: m("createBooking", "$input: CreateBookingInput!", "booking { ...BookingFields } samples { ...SampleFields }"),
+  createBooking: m("createBooking", "$input: CreateBookingInput!", "booking { ...BookingFields } samples { ...SampleFields } invoice { ...InvoiceFields }"),
+  updateBooking: m(
+    "updateBooking",
+    "$id: ID!, $input: UpdateBookingInput!",
+    "booking { ...BookingFields } samples { ...SampleFields } issuedInvoices { ...InvoiceFields } cancelledInvoices { id invoiceNo } creditNotes { ...CreditNoteFields } refundablePaise",
+  ),
   cancelBooking: m("cancelBooking", "$id: ID!", "...BookingFields"),
 
   sample: q("sample", "$id: ID!", "...SampleFields"),

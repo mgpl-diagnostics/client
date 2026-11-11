@@ -171,6 +171,11 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       get: (id: T.ID) => run<T.Booking | null>(O.booking, { id }),
       /** Creates the booking and one sample per sample type. */
       create: (input: T.CreateBookingInput) => run<T.CreateBookingResult>(O.createBooking, { input }),
+      /**
+       * Doctor, collection details, notes, tests (booking:update). Samples and billing follow: an unpaid invoice is
+       * cancelled and issued again; a paid one gets a credit note for removed tests and an invoice for added ones.
+       */
+      update: (id: T.ID, input: T.UpdateBookingInput) => run<T.UpdateBookingResult>(O.updateBooking, { id, input }),
       cancel: (id: T.ID) => run<T.Booking>(O.cancelBooking, { id }),
     },
 
