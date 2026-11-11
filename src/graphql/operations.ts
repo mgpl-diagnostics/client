@@ -237,7 +237,7 @@ export const OPERATIONS = {
     document: withFragments(`query CatalogTest($id: Int, $code: String, $sex: Sex) {
   catalogTest(id: $id, code: $code) {
     ...CatalogTestFields secondarySampleTypes
-    parameters { name unit method type options calculated formulaText referenceText range(sex: $sex) }
+    parameters { name unit method type options calculated formulaText referenceText range(sex: $sex) narrative }
   }
 }`),
   } as Operation,
