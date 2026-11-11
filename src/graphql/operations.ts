@@ -263,7 +263,8 @@ export const OPERATIONS = {
 
   sample: q("sample", "$id: ID!", "...SampleFields"),
   sampleByBarcode: q("sampleByBarcode", "$barcode: String!", "...SampleFields"),
-  collectSample: m("collectSample", "$id: ID!", "...SampleFields"),
+  collectSample: m("collectSample", "$id: ID!, $barcode: String", "...SampleFields"),
+  relabelSample: m("relabelSample", "$id: ID!, $barcode: String!", "...SampleFields"),
   receiveSample: m("receiveSample", "$id: ID!", "...SampleFields"),
   rejectSample: m("rejectSample", "$id: ID!, $reason: String!", "...SampleFields"),
 

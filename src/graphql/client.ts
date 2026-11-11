@@ -177,7 +177,10 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
     samples: {
       get: (id: T.ID) => run<T.Sample | null>(O.sample, { id }),
       byBarcode: (barcode: string) => run<T.Sample | null>(O.sampleByBarcode, { barcode }),
-      collect: (id: T.ID) => run<T.Sample>(O.collectSample, { id }),
+      /** Marks the sample collected; `barcode` is the tube's own label when it is not the generated one. */
+      collect: (id: T.ID, barcode?: string) => run<T.Sample>(O.collectSample, barcode ? { id, barcode } : { id }),
+      /** A new barcode before the lab receives the sample (BARCODE_TAKEN when another sample has it). */
+      relabel: (id: T.ID, barcode: string) => run<T.Sample>(O.relabelSample, { id, barcode }),
       receive: (id: T.ID) => run<T.Sample>(O.receiveSample, { id }),
       reject: (id: T.ID, reason: string) => run<T.Sample>(O.rejectSample, { id, reason }),
     },
