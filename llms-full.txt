@@ -623,6 +623,7 @@ staff verify and release them as usual.
 | `get` | query `externalReport` |
 | `list` | query `externalReports` (`first` / `after` cursor pages) |
 | `signatures` | query `externalReport { signatories { image } }` (only that PDF's own signatures; `signatureDataUri(img)` for an `<img>`) |
+| `candidates` | query `externalReport { candidates }` (api 0.1.5+): bookings it may belong to, best first, with `score`, `strong`, `reasons`, `patientMismatches` and per-test `mappings` |
 | `match` | mutation `matchExternalReport` |
 | `apply` | mutation `applyExternalReport` |
 | `reject` | mutation `rejectExternalReport` |
@@ -630,7 +631,12 @@ staff verify and release them as usual.
 | `nameSignature` | mutation `nameExternalSignature` |
 
 ```ts
-const ext = await api.imports.upload(await fileToBase64(file), { fileName: file.name, bookingId });
+let ext = await api.imports.upload(await fileToBase64(file), { fileName: file.name, branchId });
+// without a booking: matched on its own when one booking clearly fits; otherwise offer the candidates
+if (!ext.booking) {
+  const [best] = await api.imports.candidates(ext.id);
+  if (best && confirm(`${best.booking.bookingNo}: ${best.reasons.join(", ")}`)) ext = await api.imports.match(ext.id, best.booking.id);
+}
 if (ext.patientMismatches.length) showWarnings(ext.patientMismatches); // staff must confirm
 const mappings = ext.tests.filter((t) => t.suggestedTestCode).map((t) => ({ testIndex: t.index, testCode: t.suggestedTestCode! }));
 const reports = await api.imports.apply(ext.id, mappings, { confirmPatientMismatch: confirmed });
@@ -1009,7 +1015,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1356,6 +1362,12 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       /** The signature images of one import (only ever from its own PDF). */
       signatures: async (id: T.ID) =>
         (await run<{ id: T.ID; signatories: { id: string; sha: string; image: T.SignatureImage | null }[] } | null>(O.externalReportSignatures, { id }))?.signatories ?? [],
+      /**
+       * Up to five bookings the import may belong to, best first (api 0.1.5+). An upload without a booking is matched
+       * on its own when exactly one strong candidate stands out; staff still apply.
+       */
+      candidates: async (id: T.ID) =>
+        (await run<{ id: T.ID; candidates: T.ExternalReportCandidate[] } | null>(O.externalReportCandidates, { id }))?.candidates ?? [],
       match: (id: T.ID, bookingId: T.ID) => run<T.ExternalReport>(O.matchExternalReport, { id, bookingId }),
       /** Throws BOOKING_PATIENT_MISMATCH when the patients differ, unless `confirmPatientMismatch`. */
       apply: (id: T.ID, mappings: T.ExternalTestMappingInput[], o: { confirmPatientMismatch?: boolean } = {}) =>
@@ -2188,6 +2200,12 @@ export const OPERATIONS = {
   externalSignatories: q("externalSignatories", "$lab: ExternalLab", "...ExternalSignatoryFields"),
   /** Signature images are large: fetched on their own, only with their report. */
   externalReportSignatures: q("externalReport", "$id: ID!", "id signatories { id sha image { mimeType width height base64 } }"),
+  /** Bookings an import may belong to (searches patients): fetched on their own, only when shown. */
+  externalReportCandidates: q(
+    "externalReport",
+    "$id: ID!",
+    "id candidates(first: 5) { booking { ...BookingFields } score strong reasons patientMismatches mappings { testIndex testCode } }",
+  ),
   importExternalReport: m(
     "importExternalReport",
     "$pdfBase64: String!, $fileName: String, $bookingId: ID, $branchId: ID",
@@ -2925,6 +2943,18 @@ export interface ExternalReport {
   sampleIds: string[]; reportedAt: string | null; tests: ExternalTest[]; signatories: ExternalSignatoryOnReport[];
   reports: Pick<Report, "id" | "testCode" | "testName" | "status">[];
   uploadedBy: { id: ID; name: string } | null; uploadedAt: DateTime; appliedAt: DateTime | null; rejectReason: string | null;
+}
+/** A booking a partner report may belong to (found by the printed patient name), with why. */
+export interface ExternalReportCandidate {
+  booking: Booking;
+  /** 0 to 100: name, sex, age ±1, partner tests that map to the booked tests, how recent. */
+  score: number;
+  /** Name, sex and age agree and at least one partner test maps to a booked test. */
+  strong: boolean;
+  reasons: string[];
+  patientMismatches: string[];
+  /** For each partner test (ExternalTest.index), the booked test it maps to. */
+  mappings: { testIndex: number; testCode: string | null }[];
 }
 export interface PageInfo { hasNextPage: boolean; endCursor: string | null }
 export interface ExternalReportConnection { nodes: ExternalReport[]; pageInfo: PageInfo }

@@ -215,6 +215,12 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
       /** The signature images of one import (only ever from its own PDF). */
       signatures: async (id: T.ID) =>
         (await run<{ id: T.ID; signatories: { id: string; sha: string; image: T.SignatureImage | null }[] } | null>(O.externalReportSignatures, { id }))?.signatories ?? [],
+      /**
+       * Up to five bookings the import may belong to, best first (api 0.1.5+). An upload without a booking is matched
+       * on its own when exactly one strong candidate stands out; staff still apply.
+       */
+      candidates: async (id: T.ID) =>
+        (await run<{ id: T.ID; candidates: T.ExternalReportCandidate[] } | null>(O.externalReportCandidates, { id }))?.candidates ?? [],
       match: (id: T.ID, bookingId: T.ID) => run<T.ExternalReport>(O.matchExternalReport, { id, bookingId }),
       /** Throws BOOKING_PATIENT_MISMATCH when the patients differ, unless `confirmPatientMismatch`. */
       apply: (id: T.ID, mappings: T.ExternalTestMappingInput[], o: { confirmPatientMismatch?: boolean } = {}) =>

@@ -214,6 +214,7 @@ staff verify and release them as usual.
 | `get` | query `externalReport` |
 | `list` | query `externalReports` (`first` / `after` cursor pages) |
 | `signatures` | query `externalReport { signatories { image } }` (only that PDF's own signatures; `signatureDataUri(img)` for an `<img>`) |
+| `candidates` | query `externalReport { candidates }` (api 0.1.5+): bookings it may belong to, best first, with `score`, `strong`, `reasons`, `patientMismatches` and per-test `mappings` |
 | `match` | mutation `matchExternalReport` |
 | `apply` | mutation `applyExternalReport` |
 | `reject` | mutation `rejectExternalReport` |
@@ -221,7 +222,12 @@ staff verify and release them as usual.
 | `nameSignature` | mutation `nameExternalSignature` |
 
 ```ts
-const ext = await api.imports.upload(await fileToBase64(file), { fileName: file.name, bookingId });
+let ext = await api.imports.upload(await fileToBase64(file), { fileName: file.name, branchId });
+// without a booking: matched on its own when one booking clearly fits; otherwise offer the candidates
+if (!ext.booking) {
+  const [best] = await api.imports.candidates(ext.id);
+  if (best && confirm(`${best.booking.bookingNo}: ${best.reasons.join(", ")}`)) ext = await api.imports.match(ext.id, best.booking.id);
+}
 if (ext.patientMismatches.length) showWarnings(ext.patientMismatches); // staff must confirm
 const mappings = ext.tests.filter((t) => t.suggestedTestCode).map((t) => ({ testIndex: t.index, testCode: t.suggestedTestCode! }));
 const reports = await api.imports.apply(ext.id, mappings, { confirmPatientMismatch: confirmed });

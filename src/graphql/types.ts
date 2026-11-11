@@ -200,6 +200,18 @@ export interface ExternalReport {
   reports: Pick<Report, "id" | "testCode" | "testName" | "status">[];
   uploadedBy: { id: ID; name: string } | null; uploadedAt: DateTime; appliedAt: DateTime | null; rejectReason: string | null;
 }
+/** A booking a partner report may belong to (found by the printed patient name), with why. */
+export interface ExternalReportCandidate {
+  booking: Booking;
+  /** 0 to 100: name, sex, age ±1, partner tests that map to the booked tests, how recent. */
+  score: number;
+  /** Name, sex and age agree and at least one partner test maps to a booked test. */
+  strong: boolean;
+  reasons: string[];
+  patientMismatches: string[];
+  /** For each partner test (ExternalTest.index), the booked test it maps to. */
+  mappings: { testIndex: number; testCode: string | null }[];
+}
 export interface PageInfo { hasNextPage: boolean; endCursor: string | null }
 export interface ExternalReportConnection { nodes: ExternalReport[]; pageInfo: PageInfo }
 /** The organisation's partner signatory registry (data entered by staff). */

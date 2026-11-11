@@ -493,6 +493,12 @@ export const OPERATIONS = {
   externalSignatories: q("externalSignatories", "$lab: ExternalLab", "...ExternalSignatoryFields"),
   /** Signature images are large: fetched on their own, only with their report. */
   externalReportSignatures: q("externalReport", "$id: ID!", "id signatories { id sha image { mimeType width height base64 } }"),
+  /** Bookings an import may belong to (searches patients): fetched on their own, only when shown. */
+  externalReportCandidates: q(
+    "externalReport",
+    "$id: ID!",
+    "id candidates(first: 5) { booking { ...BookingFields } score strong reasons patientMismatches mappings { testIndex testCode } }",
+  ),
   importExternalReport: m(
     "importExternalReport",
     "$pdfBase64: String!, $fileName: String, $bookingId: ID, $branchId: ID",
