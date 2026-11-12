@@ -1,6 +1,6 @@
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.12.1",
+  "version": "2.0.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -36,9 +36,9 @@
     "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup && node scripts/check-dist.mjs",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build",
+    "prepare": "tsup",
     "llms": "node scripts/llms-full.mjs @mgpl-diagnostics/client README.md AGENTS.md llms.txt docs package.json src scripts"
   },
   "peerDependencies": {
