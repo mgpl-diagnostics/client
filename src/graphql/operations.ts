@@ -17,7 +17,7 @@ export const FRAGMENTS: Record<string, string> = {
   AuditEntryFields: `fragment AuditEntryFields on AuditEntry { id action entity entityId branchId user { id name } at }`,
 
   CatalogTestFields: `fragment CatalogTestFields on CatalogTest {
-    id name code shortCode department sampleType mrp pricePaise isProfile parameterCount
+    id kind legacyId name code shortCode department sampleType mrp pricePaise isProfile isPackage parameterCount
   }`,
 
   PatientFields: `fragment PatientFields on Patient {
@@ -235,7 +235,7 @@ export const OPERATIONS = {
   ),
   catalogTest: {
     field: "catalogTest",
-    document: withFragments(`query CatalogTest($id: Int, $code: String, $sex: Sex) {
+    document: withFragments(`query CatalogTest($id: ID, $code: String, $sex: Sex) {
   catalogTest(id: $id, code: $code) {
     ...CatalogTestFields secondarySampleTypes
     parameters { name unit method type options calculated formulaText referenceText range(sex: $sex) narrative }

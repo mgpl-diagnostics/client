@@ -142,9 +142,14 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
     catalog: {
       search: (query: string, o: { department?: string; sampleType?: string; limit?: number; fuzzy?: boolean } = {}) =>
         run<T.CatalogHit[]>(O.catalogSearch, { query, ...o }),
-      /** By numeric id or code ("CBC", "LFT"); `sex` picks the reference range. */
+      /**
+       * By MGPL id ("MGPLT0001"), the old numeric id (a number) or code ("CBC", "LIFT"); `sex` picks the reference range.
+       */
       test: (idOrCode: number | string, sex?: T.Sex) =>
-        run<T.CatalogTestDetail | null>(O.catalogTest, typeof idOrCode === "number" ? { id: idOrCode, sex } : { code: idOrCode, sex }),
+        run<T.CatalogTestDetail | null>(
+          O.catalogTest,
+          typeof idOrCode === "number" ? { id: String(idOrCode), sex } : /^MGPL[TPK]\d{4}$/i.test(idOrCode.trim()) ? { id: idOrCode.trim(), sex } : { code: idOrCode, sex },
+        ),
       tests: (filter: { department?: string; sampleType?: string } & Page = {}) => run<T.CatalogTest[]>(O.catalogTests, filter),
       departments: () => run<string[]>(O.catalogDepartments),
       sampleTypes: () => run<string[]>(O.catalogSampleTypes),

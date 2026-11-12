@@ -555,10 +555,15 @@ docs (`docs/04-api-reference.md`).
 
 ### catalog
 
+Since client 2.0 (api 0.1.6, catalog-kit 2), `CatalogTest.id` is the MGPL id, a string: `MGPLT0001` for a test,
+`MGPLP0001` for a profile, `MGPLK0001` for a package. It never changes. `kind` says which, and `legacyId` keeps
+the lab software's old numeric id. `isProfile` is now true only for profiles (it used to be true for any test
+with more than one parameter); `isPackage` marks health packages. Bookings and bills still use test **codes**.
+
 | Method | GraphQL |
 |---|---|
 | `search` | query `catalogSearch` |
-| `test` | query `catalogTest` |
+| `test` | query `catalogTest`: by MGPL id (`"MGPLT0001"`), the old numeric id (a number) or code |
 | `tests` | query `catalogTests` |
 | `departments` | query `catalogDepartments` |
 | `sampleTypes` | query `catalogSampleTypes` |
@@ -1036,7 +1041,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/client",
-  "version": "1.12.0",
+  "version": "2.0.0",
   "description": "Headless SDK for the MGPL Diagnostics backend: the GraphQL API (everything) and the report/invoice HTTP API. Zero dependencies, no UI — build your own.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -1310,9 +1315,14 @@ export function createMgplGraphQLClient(opts: MgplGraphQLClientOptions = {}) {
     catalog: {
       search: (query: string, o: { department?: string; sampleType?: string; limit?: number; fuzzy?: boolean } = {}) =>
         run<T.CatalogHit[]>(O.catalogSearch, { query, ...o }),
-      /** By numeric id or code ("CBC", "LFT"); `sex` picks the reference range. */
+      /**
+       * By MGPL id ("MGPLT0001"), the old numeric id (a number) or code ("CBC", "LIFT"); `sex` picks the reference range.
+       */
       test: (idOrCode: number | string, sex?: T.Sex) =>
-        run<T.CatalogTestDetail | null>(O.catalogTest, typeof idOrCode === "number" ? { id: idOrCode, sex } : { code: idOrCode, sex }),
+        run<T.CatalogTestDetail | null>(
+          O.catalogTest,
+          typeof idOrCode === "number" ? { id: String(idOrCode), sex } : /^MGPL[TPK]\d{4}$/i.test(idOrCode.trim()) ? { id: idOrCode.trim(), sex } : { code: idOrCode, sex },
+        ),
       tests: (filter: { department?: string; sampleType?: string } & Page = {}) => run<T.CatalogTest[]>(O.catalogTests, filter),
       departments: () => run<string[]>(O.catalogDepartments),
       sampleTypes: () => run<string[]>(O.catalogSampleTypes),
@@ -1761,7 +1771,7 @@ export const FRAGMENTS: Record<string, string> = {
   AuditEntryFields: `fragment AuditEntryFields on AuditEntry { id action entity entityId branchId user { id name } at }`,
 
   CatalogTestFields: `fragment CatalogTestFields on CatalogTest {
-    id name code shortCode department sampleType mrp pricePaise isProfile parameterCount
+    id kind legacyId name code shortCode department sampleType mrp pricePaise isProfile isPackage parameterCount
   }`,
 
   PatientFields: `fragment PatientFields on Patient {
@@ -1979,7 +1989,7 @@ export const OPERATIONS = {
   ),
   catalogTest: {
     field: "catalogTest",
-    document: withFragments(`query CatalogTest($id: Int, $code: String, $sex: Sex) {
+    document: withFragments(`query CatalogTest($id: ID, $code: String, $sex: Sex) {
   catalogTest(id: $id, code: $code) {
     ...CatalogTestFields secondarySampleTypes
     parameters { name unit method type options calculated formulaText referenceText range(sex: $sex) narrative }
@@ -2849,7 +2859,13 @@ export interface SystemUpdates { enabled: boolean; checkedAt: DateTime | null; e
 // ------------------------------------------------------------------ catalog
 
 export interface CatalogParameter { name: string | null; unit: string | null; method: string | null; type: "numeric" | "text" | "options" | "image" | "title"; options: string[] | null; calculated: boolean; formulaText: string | null; referenceText: string | null; range: string; /** interpretation / note block: print it, never enter it (api ≥ 0.1.3) */ narrative: boolean }
-export interface CatalogTest { id: number; name: string; code: string | null; shortCode: string | null; department: string; sampleType: string | null; mrp: number | null; pricePaise: number | null; isProfile: boolean; parameterCount: number }
+/** What a catalog entry is (api 0.1.6+, catalog-kit 2). */
+export type CatalogKind = "test" | "profile" | "package";
+/**
+ * A catalog entry. `id` is the MGPL id ("MGPLT0001" test, "MGPLP0001" profile, "MGPLK0001" package; api 0.1.6+,
+ * a number before); `legacyId` is the lab software's old numeric id.
+ */
+export interface CatalogTest { id: string; kind: CatalogKind; legacyId: number | null; isPackage: boolean; name: string; code: string | null; shortCode: string | null; department: string; sampleType: string | null; mrp: number | null; pricePaise: number | null; isProfile: boolean; parameterCount: number }
 export interface CatalogTestDetail extends CatalogTest { secondarySampleTypes: string[] | null; parameters: CatalogParameter[] }
 export interface CatalogHit { test: CatalogTest; score: number }
 export interface PriceQuote { total: number; totalPaise: number; tests: CatalogTest[]; unknown: string[] }

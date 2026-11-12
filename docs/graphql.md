@@ -146,10 +146,15 @@ docs (`docs/04-api-reference.md`).
 
 ### catalog
 
+Since client 2.0 (api 0.1.6, catalog-kit 2), `CatalogTest.id` is the MGPL id, a string: `MGPLT0001` for a test,
+`MGPLP0001` for a profile, `MGPLK0001` for a package. It never changes. `kind` says which, and `legacyId` keeps
+the lab software's old numeric id. `isProfile` is now true only for profiles (it used to be true for any test
+with more than one parameter); `isPackage` marks health packages. Bookings and bills still use test **codes**.
+
 | Method | GraphQL |
 |---|---|
 | `search` | query `catalogSearch` |
-| `test` | query `catalogTest` |
+| `test` | query `catalogTest`: by MGPL id (`"MGPLT0001"`), the old numeric id (a number) or code |
 | `tests` | query `catalogTests` |
 | `departments` | query `catalogDepartments` |
 | `sampleTypes` | query `catalogSampleTypes` |

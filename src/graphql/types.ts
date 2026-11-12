@@ -58,7 +58,13 @@ export interface SystemUpdates { enabled: boolean; checkedAt: DateTime | null; e
 // ------------------------------------------------------------------ catalog
 
 export interface CatalogParameter { name: string | null; unit: string | null; method: string | null; type: "numeric" | "text" | "options" | "image" | "title"; options: string[] | null; calculated: boolean; formulaText: string | null; referenceText: string | null; range: string; /** interpretation / note block: print it, never enter it (api ≥ 0.1.3) */ narrative: boolean }
-export interface CatalogTest { id: number; name: string; code: string | null; shortCode: string | null; department: string; sampleType: string | null; mrp: number | null; pricePaise: number | null; isProfile: boolean; parameterCount: number }
+/** What a catalog entry is (api 0.1.6+, catalog-kit 2). */
+export type CatalogKind = "test" | "profile" | "package";
+/**
+ * A catalog entry. `id` is the MGPL id ("MGPLT0001" test, "MGPLP0001" profile, "MGPLK0001" package; api 0.1.6+,
+ * a number before); `legacyId` is the lab software's old numeric id.
+ */
+export interface CatalogTest { id: string; kind: CatalogKind; legacyId: number | null; isPackage: boolean; name: string; code: string | null; shortCode: string | null; department: string; sampleType: string | null; mrp: number | null; pricePaise: number | null; isProfile: boolean; parameterCount: number }
 export interface CatalogTestDetail extends CatalogTest { secondarySampleTypes: string[] | null; parameters: CatalogParameter[] }
 export interface CatalogHit { test: CatalogTest; score: number }
 export interface PriceQuote { total: number; totalPaise: number; tests: CatalogTest[]; unknown: string[] }
