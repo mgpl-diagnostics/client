@@ -1,5 +1,7 @@
 import { defineConfig } from "tsup";
 
+// The two configs build in parallel into dist/, so neither may `clean` it: one would delete the other's
+// files (react.d.ts went missing in 1.10.0–1.12.0). `npm run build` empties dist/ first instead.
 export default defineConfig([
   // plain SDK — usable from server components, workers, Node scripts, any framework
   // security-kit (device signals) is bundled in, so the SDK keeps zero runtime dependencies
@@ -9,7 +11,6 @@ export default defineConfig([
     dts: true,
     target: "es2020",
     platform: "browser",
-    clean: true,
     noExternal: ["@mgpl-diagnostics/security-kit"],
   },
   // React hooks — marked as a client module for Next.js

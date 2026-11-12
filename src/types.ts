@@ -129,7 +129,10 @@ export type InvoiceItemInput = string | (Partial<InvoiceItem> & { code: string }
 
 export interface Payment {
   mode: string;
+  /** always positive; a refund is `kind: "refund"`, not a negative amount */
   amount: number;
+  /** money received (default) or money given back */
+  kind?: "payment" | "refund";
   date?: string;
   reference?: string;
 }
@@ -156,7 +159,7 @@ export interface InvoiceRequest {
   download?: boolean;
 }
 
-export type PaymentStatus = "PAID" | "PARTIALLY PAID" | "DUE";
+export type PaymentStatus = "PAID" | "PARTIALLY PAID" | "DUE" | "REFUNDED" | "CANCELLED";
 
 /** POST /invoice with format "json" — the server's calculation (rupees) */
 export interface InvoiceTotals {
@@ -171,6 +174,8 @@ export interface InvoiceTotals {
   total: number;
   paid: number;
   due: number;
+  /** money given back (refund payments), already taken off `paid` */
+  refunded: number;
   excess: number;
   status: PaymentStatus;
   hasTax: boolean;
