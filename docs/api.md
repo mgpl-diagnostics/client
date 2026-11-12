@@ -59,7 +59,7 @@ interface Patient {
 
 `TemplateCatalog { templates: { id, name, category?, specimen?, method?, fields: { key, label, unit?, range? }[] }[], profiles: { id, name, tests }[] }`
 
-`InvoiceTotals { lines[], subtotal, lineDiscount, billDiscount, taxable, tax, taxByRate[], roundOff, total, paid, due, excess, status, hasTax, hasDiscount, amountInWords }`
+`InvoiceTotals { lines[], subtotal, lineDiscount, billDiscount, taxable, tax, taxByRate[], roundOff, total, paid, due, refunded, excess, status, hasTax, hasDiscount, amountInWords }`
 
 `PriceEntry { code, name, category, rate, taxPercent?, hsn? }`
 
